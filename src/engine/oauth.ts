@@ -32,7 +32,7 @@ export async function createOAuthClient(name: string): Promise<OAuthClientWithSe
     client_id,
     client_secret_hash,
     name,
-    redirect_uris: ['https://claude.ai/'],
+    redirect_uris: ['https://claude.ai/', 'https://claude.com/'],
     scopes: ['ledger:read', 'ledger:write'],
     is_active: true,
   });
@@ -42,6 +42,39 @@ export async function createOAuthClient(name: string): Promise<OAuthClientWithSe
     .first<OAuthClient>();
 
   return { ...client, client_secret: rawSecret };
+}
+
+/**
+ * RFC 7591 — Dynamic Client Registration.
+ * Creates a client on behalf of a self-registering OAuth client (e.g. Claude's MCP connector).
+ * Public clients (token_endpoint_auth_method: "none") have no client_secret.
+ */
+export async function registerDynamicClient(opts: {
+  name: string;
+  redirectUris: string[];
+  scopes: string[];
+  isPublic: boolean;
+}): Promise<{ client_id: string; client_secret?: string }> {
+  const client_id = 'luca_' + crypto.randomBytes(12).toString('hex');
+
+  let rawSecret: string | undefined;
+  let client_secret_hash: string | null = null;
+
+  if (!opts.isPublic) {
+    rawSecret = crypto.randomBytes(32).toString('hex');
+    client_secret_hash = await bcrypt.hash(rawSecret, 10);
+  }
+
+  await db('oauth_clients').insert({
+    client_id,
+    client_secret_hash,   // null for public clients
+    name: opts.name,
+    redirect_uris: opts.redirectUris,
+    scopes: opts.scopes,
+    is_active: true,
+  });
+
+  return { client_id, ...(rawSecret !== undefined ? { client_secret: rawSecret } : {}) };
 }
 
 export async function listOAuthClients(): Promise<OAuthClient[]> {

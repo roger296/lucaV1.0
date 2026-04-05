@@ -5,6 +5,7 @@ import {
   findOAuthClient,
   createAuthorizationCode,
   exchangeCodeForToken,
+  registerDynamicClient,
 } from '../engine/oauth';
 import { findUserByEmail } from '../db/queries/users';
 import { config } from '../config';
@@ -31,6 +32,16 @@ function esc(s: unknown): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#x27;');
+}
+
+// ── Redirect URI validation ───────────────────────────────────────────────
+// Accepts any https://claude.ai/* or https://claude.com/* URI dynamically
+// (Claude may use either domain depending on region/version), plus any URI
+// that was explicitly registered for this client at creation time.
+
+function isPermittedRedirectUri(uri: string, registeredUris: string[]): boolean {
+  if (uri.startsWith('https://claude.ai/') || uri.startsWith('https://claude.com/')) return true;
+  return registeredUris.includes(uri);
 }
 
 // ── Login page HTML ───────────────────────────────────────────────────────
@@ -148,13 +159,10 @@ oauthRouter.get('/authorize', async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    // Accept any https://claude.ai/* redirect URI dynamically
-    const isClaudeUri = redirect_uri.startsWith('https://claude.ai/');
     const registeredUris = Array.isArray(client.redirect_uris)
       ? client.redirect_uris as string[]
       : [];
-    const isRegistered = registeredUris.includes(redirect_uri);
-    if (!isClaudeUri && !isRegistered) {
+    if (!isPermittedRedirectUri(redirect_uri, registeredUris)) {
       res.status(400).send('redirect_uri not permitted for this client.');
       return;
     }
@@ -213,12 +221,10 @@ oauthRouter.post('/authorize', async (req: Request, res: Response): Promise<void
       return;
     }
 
-    const isClaudeUri = (redirect_uri ?? '').startsWith('https://claude.ai/');
     const registeredUris = Array.isArray(client.redirect_uris)
       ? client.redirect_uris as string[]
       : [];
-    const isRegistered = registeredUris.includes(redirect_uri ?? '');
-    if (!isClaudeUri && !isRegistered) {
+    if (!isPermittedRedirectUri(redirect_uri ?? '', registeredUris)) {
       res.status(400).send('redirect_uri not permitted for this client.');
       return;
     }
@@ -348,6 +354,113 @@ oauthRouter.post('/token', async (req: Request, res: Response): Promise<void> =>
   }
 });
 
+// ── RFC 7591 Dynamic Client Registration ──────────────────────────────────
+
+/**
+ * OPTIONS /oauth/register — CORS preflight
+ */
+oauthRouter.options('/register', (req: Request, res: Response): void => {
+  res
+    .set('Access-Control-Allow-Origin', req.headers.origin ?? '*')
+    .set('Access-Control-Allow-Methods', 'POST, OPTIONS')
+    .set('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+    .set('Access-Control-Max-Age', '86400')
+    .status(204)
+    .end();
+});
+
+/**
+ * POST /oauth/register — RFC 7591 Dynamic Client Registration
+ * Claude's MCP connector calls this to self-register before starting the
+ * Authorization Code flow. No authentication required (open endpoint).
+ */
+oauthRouter.post('/register', async (req: Request, res: Response): Promise<void> => {
+  // CORS — Claude's backend may call this cross-origin
+  res.set('Access-Control-Allow-Origin', req.headers.origin ?? '*');
+
+  try {
+    const body = req.body as Record<string, unknown>;
+
+    const clientName = (body['client_name'] as string | undefined)?.trim();
+    const redirectUris = body['redirect_uris'] as unknown;
+    const grantTypes = (body['grant_types'] as string[] | undefined) ?? ['authorization_code'];
+    const responseTypes = (body['response_types'] as string[] | undefined) ?? ['code'];
+    const tokenEndpointAuthMethod =
+      (body['token_endpoint_auth_method'] as string | undefined) ?? 'client_secret_basic';
+    const scope = (body['scope'] as string | undefined) ?? 'ledger:read ledger:write';
+
+    // ── Validate required fields ──────────────────────────────────────────
+    if (!clientName) {
+      res.status(400).json({
+        error: 'invalid_client_metadata',
+        error_description: 'client_name is required',
+      });
+      return;
+    }
+
+    if (!Array.isArray(redirectUris) || redirectUris.length === 0) {
+      res.status(400).json({
+        error: 'invalid_client_metadata',
+        error_description: 'redirect_uris must be a non-empty array',
+      });
+      return;
+    }
+
+    for (const uri of redirectUris as unknown[]) {
+      if (typeof uri !== 'string' || !uri.startsWith('https://')) {
+        res.status(400).json({
+          error: 'invalid_redirect_uri',
+          error_description: `All redirect_uris must use HTTPS: ${String(uri)}`,
+        });
+        return;
+      }
+    }
+
+    // ── Register the client ───────────────────────────────────────────────
+    const isPublic = tokenEndpointAuthMethod === 'none';
+    const scopes = scope.split(/\s+/).filter(Boolean);
+
+    console.log('[oauth] POST /register — registering client:', {
+      clientName,
+      redirectUris,
+      isPublic,
+      scopes,
+    });
+
+    const result = await registerDynamicClient({
+      name: clientName,
+      redirectUris: redirectUris as string[],
+      scopes,
+      isPublic,
+    });
+
+    // ── Build response (RFC 7591 §3.2.1) ─────────────────────────────────
+    const responseBody: Record<string, unknown> = {
+      client_id: result.client_id,
+      client_name: clientName,
+      redirect_uris: redirectUris,
+      grant_types: grantTypes,
+      response_types: responseTypes,
+      token_endpoint_auth_method: tokenEndpointAuthMethod,
+      scope: scopes.join(' '),
+    };
+
+    if (!isPublic && result.client_secret) {
+      responseBody['client_secret'] = result.client_secret;
+    }
+
+    console.log('[oauth] Registered new client:', result.client_id, isPublic ? '(public)' : '(confidential)');
+    res.status(201).json(responseBody);
+
+  } catch (err) {
+    console.error('[oauth] POST /register error:', err);
+    res.status(500).json({
+      error: 'server_error',
+      error_description: 'Registration failed. Please try again.',
+    });
+  }
+});
+
 // ── OAuth discovery ───────────────────────────────────────────────────────
 
 export function registerOAuthDiscovery(app: Express, baseUrl: string): void {
@@ -356,6 +469,7 @@ export function registerOAuthDiscovery(app: Express, baseUrl: string): void {
       issuer: baseUrl,
       authorization_endpoint: `${baseUrl}/oauth/authorize`,
       token_endpoint: `${baseUrl}/oauth/token`,
+      registration_endpoint: `${baseUrl}/oauth/register`,
       response_types_supported: ['code'],
       grant_types_supported: ['authorization_code'],
       code_challenge_methods_supported: ['S256'],
