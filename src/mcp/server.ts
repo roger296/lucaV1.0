@@ -186,8 +186,44 @@ async function dispatch(req: JsonRpcRequest): Promise<JsonRpcResponse> {
 
 // ── Route handlers ────────────────────────────────────────────────────────
 
-// GET /mcp — Claude probes this to verify the endpoint exists
-mcpRouter.get('/', (_req: Request, res: Response): void => {
+// ── Shared auth helper ────────────────────────────────────────────────────
+
+// RFC 6750 §3 — points to the MCP-specific protected resource metadata so
+// Claude discovers "resource": "https://gl.tbv-3pl.com/mcp" (not the root).
+// This ensures the resource Claude binds to in the authorize request matches
+// the MCP endpoint URL, allowing it to verify the callback and call /oauth/token.
+function mcpWwwAuthenticate(): string {
+  return [
+    `Bearer realm="${config.baseUrl}"`,
+    `scope="ledger:read ledger:write"`,
+    `resource_metadata="${config.baseUrl}/.well-known/oauth-protected-resource/mcp"`,
+  ].join(', ');
+}
+
+// GET /mcp — must also return 401 when unauthenticated so Claude receives the
+// WWW-Authenticate header and starts the OAuth discovery flow correctly.
+mcpRouter.get('/', async (req: Request, res: Response): Promise<void> => {
+  const authHeader = (req.headers['authorization'] as string) ?? '';
+  const rawToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+
+  if (!rawToken) {
+    console.log('[mcp] GET 401 — no Bearer token. User-Agent:', req.headers['user-agent']);
+    res
+      .status(401)
+      .set('WWW-Authenticate', mcpWwwAuthenticate())
+      .json({ error: 'unauthorized', error_description: 'Bearer token required' });
+    return;
+  }
+
+  const session = await validateAccessToken(rawToken);
+  if (!session) {
+    res
+      .status(401)
+      .set('WWW-Authenticate', mcpWwwAuthenticate())
+      .json({ error: 'unauthorized', error_description: 'Invalid or expired token' });
+    return;
+  }
+
   res.json({
     name: 'luca-general-ledger',
     version: '1.0.0',
@@ -202,19 +238,11 @@ mcpRouter.post('/', async (req: Request, res: Response): Promise<void> => {
   const authHeader = (req.headers['authorization'] as string) ?? '';
   const rawToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
 
-  // RFC 6750 §3 — WWW-Authenticate header tells Claude's client exactly where
-  // to find the authorization and token endpoints so it can complete the OAuth flow.
-  const wwwAuthenticate = [
-    `Bearer realm="${config.baseUrl}"`,
-    `scope="ledger:read ledger:write"`,
-    `resource_metadata="${config.baseUrl}/.well-known/oauth-protected-resource"`,
-  ].join(', ');
-
   if (!rawToken) {
     console.log('[mcp] 401 — no Bearer token. User-Agent:', req.headers['user-agent']);
     res
       .status(401)
-      .set('WWW-Authenticate', wwwAuthenticate)
+      .set('WWW-Authenticate', mcpWwwAuthenticate())
       .json({ error: 'unauthorized', error_description: 'Bearer token required' });
     return;
   }
@@ -223,7 +251,7 @@ mcpRouter.post('/', async (req: Request, res: Response): Promise<void> => {
   if (!session) {
     res
       .status(401)
-      .set('WWW-Authenticate', wwwAuthenticate)
+      .set('WWW-Authenticate', mcpWwwAuthenticate())
       .json({ error: 'unauthorized', error_description: 'Invalid or expired token' });
     return;
   }

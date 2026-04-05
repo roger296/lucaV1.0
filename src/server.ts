@@ -71,7 +71,17 @@ const app = express();
 // ── Request ID (must be first) ────────────────────────────────────────────────
 app.use(requestIdMiddleware);
 
-// ── Security and parsing middleware ─────────────────────────────────────────
+// ── Body parsers (registered early — needed by OAuth routes below Helmet) ────
+app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // needed for OAuth login form POST
+
+// ── OAuth routes — registered BEFORE Helmet so the login page HTML is not
+//    affected by X-Frame-Options: DENY or restrictive CSP headers, and the
+//    well-known JSON endpoints are not blocked by frame/content policies. ──────
+registerOAuthDiscovery(app, config.baseUrl);
+app.use('/oauth', oauthRouter);
+
+// ── Security middleware ───────────────────────────────────────────────────────
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -86,8 +96,6 @@ app.use(
 );
 app.use(cors());
 app.use(morgan(config.env === 'production' ? 'combined' : 'dev'));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true })); // needed for OAuth login form POST
 
 // ── Health check (no auth required — registered BEFORE apiRouter) ────────────
 const serverStartTime = Date.now();
@@ -123,10 +131,6 @@ app.get('/api/health', async (_req, res) => {
     uptime_seconds: uptime,
   });
 });
-
-// ── OAuth routes (public — no JWT middleware) ─────────────────────────────────
-registerOAuthDiscovery(app, config.baseUrl);
-app.use('/oauth', oauthRouter);
 
 // ── OAuth Protected Resource metadata (RFC 9728) ─────────────────────────────
 // Claude's MCP client fetches this to discover the authorization server.
