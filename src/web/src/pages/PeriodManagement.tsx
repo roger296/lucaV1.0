@@ -40,7 +40,7 @@ function PeriodDetail({ periodId, onAction }: { periodId: string; onAction: () =
     setBusy(true);
     setActionError('');
     try {
-      await apiPost(`/api/periods/${periodId}/hard-close`, {}, 'finance.controller');
+      await apiPost(`/api/periods/${periodId}/hard-close`, {});
       refetch();
       onAction();
     } catch (e) {
