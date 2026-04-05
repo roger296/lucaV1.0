@@ -209,9 +209,9 @@ if [ -d "$INSTALL_DIR" ]; then
     OVERWRITE="${OVERWRITE:-N}"
     if [[ "$OVERWRITE" =~ ^[Yy]$ ]]; then
         if [ -f "$INSTALL_DIR/docker-compose.yml" ]; then
-            cd "$INSTALL_DIR"
-            docker compose down 2>/dev/null || true
+            docker compose -f "$INSTALL_DIR/docker-compose.yml" down 2>/dev/null || true
         fi
+        cd /tmp  # must leave the directory before deleting it
         rm -rf "$INSTALL_DIR"
     else
         error "Installation cancelled. Remove $INSTALL_DIR manually and re-run."
