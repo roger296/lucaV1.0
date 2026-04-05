@@ -1,32 +1,25 @@
 import type { Request, Response } from 'express';
 import { Router } from 'express';
+import { z } from 'zod';
 import { validateAccessToken } from '../engine/oauth';
-import { registerTools } from './tools';
+import { registerTools, type McpServer } from './tools';
 
 // ---------------------------------------------------------------------------
-// MCP HTTP Server — implements JSON-RPC 2.0 over HTTP (stateless mode)
+// MCP HTTP Server — JSON-RPC 2.0 over HTTP (stateless)
 //
-// Claude's MCP client sends POST requests with JSON-RPC payloads.
-// Each request is independent (stateless) — no persistent session needed.
-//
-// Protocol:
-//   POST /mcp  Content-Type: application/json
-//   Authorization: Bearer <token>
-//
-// Methods handled:
-//   initialize          — return server capabilities
-//   tools/list          — return list of available tools
-//   tools/call          — invoke a tool and return result
-//   ping                — health check
+// POST /mcp   Authorization: Bearer <token>
+//             Content-Type: application/json
+//             Body: JSON-RPC 2.0 request object
+// GET  /mcp   Returns server info (used by Claude to verify endpoint exists)
 // ---------------------------------------------------------------------------
 
 export const mcpRouter = Router();
 
-// ── Types ──────────────────────────────────────────────────────────────────
+// ── JSON-RPC types ────────────────────────────────────────────────────────
 
 interface JsonRpcRequest {
-  jsonrpc: '2.0';
-  id: string | number | null;
+  jsonrpc: string;
+  id?: string | number | null;
   method: string;
   params?: Record<string, unknown>;
 }
@@ -35,76 +28,97 @@ interface JsonRpcResponse {
   jsonrpc: '2.0';
   id: string | number | null;
   result?: unknown;
-  error?: { code: number; message: string; data?: unknown };
+  error?: { code: number; message: string };
 }
 
-// ── Tool registry — built once at startup ─────────────────────────────────
+function ok(id: string | number | null | undefined, result: unknown): JsonRpcResponse {
+  return { jsonrpc: '2.0', id: id ?? null, result };
+}
 
-interface ToolDef {
+function err(id: string | number | null | undefined, code: number, message: string): JsonRpcResponse {
+  return { jsonrpc: '2.0', id: id ?? null, error: { code, message } };
+}
+
+// ── Tool registry ─────────────────────────────────────────────────────────
+
+interface ToolEntry {
   name: string;
   description: string;
-  inputSchema: {
-    type: 'object';
-    properties: Record<string, unknown>;
-    required: string[];
-  };
+  inputSchema: { type: 'object'; properties: Record<string, unknown>; required: string[] };
   handler: (args: Record<string, unknown>) => Promise<{
     content: Array<{ type: 'text'; text: string }>;
     isError?: boolean;
   }>;
 }
 
-const toolRegistry = new Map<string, ToolDef>();
+const toolRegistry = new Map<string, ToolEntry>();
 
-// registerTools calls .tool() on our stub McpServer — we capture those calls here
-const stubServer = {
+// Build a JSON Schema property descriptor from a Zod type
+function zodToJsonSchema(zodType: z.ZodTypeAny): Record<string, unknown> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const def = (zodType as any)._def as Record<string, unknown>;
+  const typeName = (def?.['typeName'] as string) ?? '';
+  const description = (def?.['description'] as string | undefined);
+
+  let schema: Record<string, unknown>;
+
+  switch (typeName) {
+    case 'ZodString':
+      schema = { type: 'string' };
+      break;
+    case 'ZodNumber':
+      schema = { type: 'number' };
+      break;
+    case 'ZodBoolean':
+      schema = { type: 'boolean' };
+      break;
+    case 'ZodEnum': {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const values = (def?.['values'] as string[]) ?? [];
+      schema = { type: 'string', enum: values };
+      break;
+    }
+    case 'ZodArray':
+      schema = { type: 'array', items: { type: 'string' } };
+      break;
+    case 'ZodObject':
+      schema = { type: 'object' };
+      break;
+    case 'ZodOptional':
+    case 'ZodNullable': {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const inner = (def?.['innerType'] as z.ZodTypeAny) ?? undefined;
+      schema = inner ? zodToJsonSchema(inner) : { type: 'string' };
+      break;
+    }
+    default:
+      schema = { type: 'string' };
+  }
+
+  if (description) schema['description'] = description;
+  return schema;
+}
+
+function isOptional(zodType: z.ZodTypeAny): boolean {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const typeName = ((zodType as any)._def?.typeName as string) ?? '';
+  return typeName === 'ZodOptional' || typeName === 'ZodNullable';
+}
+
+// Implement the McpServer interface so TypeScript is satisfied
+const stubServer: McpServer = {
   tool(
     name: string,
     description: string,
-    schema: Record<string, { _def?: unknown; description?: string }>,
+    schema: Record<string, z.ZodTypeAny>,
     handler: (args: Record<string, unknown>) => Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }>,
-  ) {
-    // Convert zod schema to JSON Schema properties
+  ): void {
     const properties: Record<string, unknown> = {};
     const required: string[] = [];
 
     for (const [key, zodType] of Object.entries(schema)) {
-      // Basic zod → JSON Schema conversion
-      const def = (zodType as { _def?: { typeName?: string; description?: string; innerType?: { _def?: { typeName?: string } }; checks?: Array<{ kind: string }> } })._def;
-      const typeName = def?.typeName ?? '';
-
-      let jsonType: unknown = { type: 'string' };
-
-      if (typeName === 'ZodString') {
-        jsonType = { type: 'string' };
-      } else if (typeName === 'ZodNumber') {
-        jsonType = { type: 'number' };
-      } else if (typeName === 'ZodBoolean') {
-        jsonType = { type: 'boolean' };
-      } else if (typeName === 'ZodEnum') {
-        const enumDef = def as { values?: string[] };
-        jsonType = { type: 'string', enum: enumDef.values ?? [] };
-      } else if (typeName === 'ZodArray') {
-        jsonType = { type: 'array', items: { type: 'string' } };
-      } else if (typeName === 'ZodObject') {
-        jsonType = { type: 'object' };
-      } else if (typeName === 'ZodOptional') {
-        const inner = def?.innerType?._def?.typeName ?? '';
-        if (inner === 'ZodNumber') jsonType = { type: 'number' };
-        else if (inner === 'ZodBoolean') jsonType = { type: 'boolean' };
-        else jsonType = { type: 'string' };
-      }
-
-      if (def?.description) {
-        (jsonType as Record<string, unknown>)['description'] = def.description;
-      }
-
-      properties[key] = jsonType;
-
-      // Mark as required if not optional/nullable
-      if (typeName !== 'ZodOptional' && typeName !== 'ZodNullable') {
-        required.push(key);
-      }
+      properties[key] = zodToJsonSchema(zodType);
+      if (!isOptional(zodType)) required.push(key);
     }
 
     toolRegistry.set(name, {
@@ -116,100 +130,62 @@ const stubServer = {
   },
 };
 
-// Populate the registry
+// Populate registry at module load time
 registerTools(stubServer);
 
-// ── JSON-RPC helpers ──────────────────────────────────────────────────────
+// ── Request dispatcher ────────────────────────────────────────────────────
 
-function rpcOk(id: string | number | null, result: unknown): JsonRpcResponse {
-  return { jsonrpc: '2.0', id, result };
-}
+async function dispatch(req: JsonRpcRequest): Promise<JsonRpcResponse> {
+  const { id, method, params = {} } = req;
 
-function rpcErr(id: string | number | null, code: number, message: string): JsonRpcResponse {
-  return { jsonrpc: '2.0', id, error: { code, message } };
-}
+  switch (method) {
+    case 'initialize':
+      return ok(id, {
+        protocolVersion: '2024-11-05',
+        capabilities: { tools: {} },
+        serverInfo: { name: 'luca-general-ledger', version: '1.0.0' },
+      });
 
-// ── Handlers ──────────────────────────────────────────────────────────────
+    case 'notifications/initialized':
+      return ok(id, null);
 
-function handleInitialize(id: string | number | null): JsonRpcResponse {
-  return rpcOk(id, {
-    protocolVersion: '2024-11-05',
-    capabilities: { tools: {} },
-    serverInfo: { name: 'luca-general-ledger', version: '1.0.0' },
-  });
-}
+    case 'ping':
+      return ok(id, {});
 
-function handleToolsList(id: string | number | null): JsonRpcResponse {
-  const tools = Array.from(toolRegistry.values()).map((t) => ({
-    name: t.name,
-    description: t.description,
-    inputSchema: t.inputSchema,
-  }));
-  return rpcOk(id, { tools });
-}
+    case 'tools/list':
+      return ok(id, {
+        tools: Array.from(toolRegistry.values()).map((t) => ({
+          name: t.name,
+          description: t.description,
+          inputSchema: t.inputSchema,
+        })),
+      });
 
-async function handleToolsCall(
-  id: string | number | null,
-  params: Record<string, unknown>,
-): Promise<JsonRpcResponse> {
-  const toolName = params['name'] as string | undefined;
-  const args = (params['arguments'] ?? {}) as Record<string, unknown>;
+    case 'tools/call': {
+      const toolName = params['name'] as string | undefined;
+      const args = (params['arguments'] ?? {}) as Record<string, unknown>;
 
-  if (!toolName) {
-    return rpcErr(id, -32602, 'Missing tool name');
-  }
+      if (!toolName) return err(id, -32602, 'Missing tool name');
 
-  const tool = toolRegistry.get(toolName);
-  if (!tool) {
-    return rpcErr(id, -32602, `Unknown tool: ${toolName}`);
-  }
+      const tool = toolRegistry.get(toolName);
+      if (!tool) return err(id, -32602, `Unknown tool: ${toolName}`);
 
-  try {
-    const result = await tool.handler(args);
-    return rpcOk(id, result);
-  } catch (err) {
-    return rpcErr(id, -32603, err instanceof Error ? err.message : 'Tool execution failed');
+      try {
+        const result = await tool.handler(args);
+        return ok(id, result);
+      } catch (e) {
+        return err(id, -32603, e instanceof Error ? e.message : 'Tool execution failed');
+      }
+    }
+
+    default:
+      return err(id, -32601, `Method not found: ${method}`);
   }
 }
 
-// ── Main route handler ────────────────────────────────────────────────────
+// ── Route handlers ────────────────────────────────────────────────────────
 
-mcpRouter.post('/', async (req: Request, res: Response): Promise<void> => {
-  // ── Authenticate ──────────────────────────────────────────────────────
-  const authHeader = req.headers.authorization ?? '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-
-  if (!token) {
-    res.status(401).json({ error: 'unauthorized', error_description: 'Bearer token required' });
-    return;
-  }
-
-  const session = await validateAccessToken(token);
-  if (!session) {
-    res.status(401).json({ error: 'unauthorized', error_description: 'Invalid or expired token' });
-    return;
-  }
-
-  // ── Parse JSON-RPC body ───────────────────────────────────────────────
-  const body = req.body as JsonRpcRequest | JsonRpcRequest[] | undefined;
-
-  if (!body) {
-    res.status(400).json(rpcErr(null, -32700, 'Parse error: empty body'));
-    return;
-  }
-
-  // Handle batch requests
-  if (Array.isArray(body)) {
-    const responses = await Promise.all(body.map((r) => dispatch(r)));
-    res.json(responses);
-    return;
-  }
-
-  const response = await dispatch(body);
-  res.json(response);
-});
-
-// GET /mcp — used by Claude to check if the endpoint exists
+// GET /mcp — Claude probes this to verify the endpoint exists
 mcpRouter.get('/', (_req: Request, res: Response): void => {
   res.json({
     name: 'luca-general-ledger',
@@ -219,33 +195,36 @@ mcpRouter.get('/', (_req: Request, res: Response): void => {
   });
 });
 
-// ── Dispatcher ────────────────────────────────────────────────────────────
+// POST /mcp — main JSON-RPC endpoint
+mcpRouter.post('/', async (req: Request, res: Response): Promise<void> => {
+  // Authenticate via Bearer token
+  const authHeader = (req.headers['authorization'] as string) ?? '';
+  const rawToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
 
-async function dispatch(req: JsonRpcRequest): Promise<JsonRpcResponse> {
-  const { id = null, method, params = {} } = req;
-
-  if (req.jsonrpc !== '2.0') {
-    return rpcErr(id, -32600, 'Invalid Request: jsonrpc must be "2.0"');
+  if (!rawToken) {
+    res.status(401).json({ error: 'unauthorized', error_description: 'Bearer token required' });
+    return;
   }
 
-  switch (method) {
-    case 'initialize':
-      return handleInitialize(id);
-
-    case 'notifications/initialized':
-      // Notification — no response needed, but return ok for robustness
-      return rpcOk(id, null);
-
-    case 'ping':
-      return rpcOk(id, {});
-
-    case 'tools/list':
-      return handleToolsList(id);
-
-    case 'tools/call':
-      return await handleToolsCall(id, params);
-
-    default:
-      return rpcErr(id, -32601, `Method not found: ${method}`);
+  const session = await validateAccessToken(rawToken);
+  if (!session) {
+    res.status(401).json({ error: 'unauthorized', error_description: 'Invalid or expired token' });
+    return;
   }
-}
+
+  // Parse body
+  const body = req.body as JsonRpcRequest | JsonRpcRequest[] | null;
+  if (!body) {
+    res.json(err(null, -32700, 'Empty request body'));
+    return;
+  }
+
+  // Handle batch
+  if (Array.isArray(body)) {
+    const responses = await Promise.all(body.map(dispatch));
+    res.json(responses);
+    return;
+  }
+
+  res.json(await dispatch(body));
+});
