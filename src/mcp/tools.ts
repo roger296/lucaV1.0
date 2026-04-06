@@ -89,6 +89,31 @@ export const postTransactionSchema = {
   reference: z.string().optional().describe('Reference for this transaction'),
   description: z.string().optional().describe('Human-readable description'),
   amount: z.number().optional().describe('Gross amount for amount-based transaction types'),
+  account_code: z
+    .string()
+    .optional()
+    .describe(
+      'Override the default expense/revenue account code. ' +
+      'For SUPPLIER_INVOICE: overrides expense account (default 5000). ' +
+      'For CUSTOMER_INVOICE: overrides revenue account (default 4000). ' +
+      'Also works for credit note types. Ignored for payments and other types.',
+    ),
+  tax_code: z
+    .enum([
+      'STANDARD_VAT_20',
+      'REDUCED_VAT_5',
+      'ZERO_RATED',
+      'EXEMPT',
+      'OUTSIDE_SCOPE',
+      'REVERSE_CHARGE',
+      'POSTPONED_VAT',
+    ])
+    .optional()
+    .describe(
+      'Override the default VAT treatment. Controls the rate used during expansion ' +
+      'and whether a VAT line is generated. OUTSIDE_SCOPE/EXEMPT/ZERO_RATED produce no VAT line. ' +
+      'Defaults to STANDARD_VAT_20 when omitted. Only applies to invoice and credit note types.',
+    ),
   lines: z
     .array(
       z.object({
@@ -128,6 +153,8 @@ export async function handlePostTransaction(
       idempotency_key: args['idempotency_key'] as string | undefined,
       submitted_by: args['submitted_by'] as string | undefined,
       soft_close_override: args['soft_close_override'] as boolean | undefined,
+      account_code: args['account_code'] as string | undefined,
+      tax_code: args['tax_code'] as import('../engine/types').TaxCode | undefined,
     });
     return ok(result);
   } catch (e) {

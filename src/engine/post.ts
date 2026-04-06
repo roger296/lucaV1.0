@@ -422,6 +422,12 @@ function buildChainPayload(
   if (submission.adjustment_context) {
     payload['adjustment_context'] = submission.adjustment_context;
   }
+  if (submission.account_code) {
+    payload['account_code'] = submission.account_code;
+  }
+  if (submission.tax_code) {
+    payload['tax_code'] = submission.tax_code;
+  }
 
   return payload;
 }

@@ -51,6 +51,19 @@ export interface AdjustmentContext {
   authorised_by: string;
 }
 
+/**
+ * Recognised tax codes.
+ * Used by the expansion engine to determine the VAT rate and treatment.
+ */
+export type TaxCode =
+  | 'STANDARD_VAT_20'
+  | 'REDUCED_VAT_5'
+  | 'ZERO_RATED'
+  | 'EXEMPT'
+  | 'OUTSIDE_SCOPE'
+  | 'REVERSE_CHARGE'
+  | 'POSTPONED_VAT';
+
 // ---------------------------------------------------------------------------
 // Transaction submission — the input to the posting engine
 // ---------------------------------------------------------------------------
@@ -80,6 +93,22 @@ export interface TransactionSubmission {
    * Unused for MANUAL_JOURNAL / PRIOR_PERIOD_ADJUSTMENT.
    */
   amount?: number;
+  /**
+   * Override the default expense/revenue account code for amount-based types.
+   * For SUPPLIER_INVOICE / SUPPLIER_CREDIT_NOTE: overrides the EXPENSE line (default 5000).
+   * For CUSTOMER_INVOICE / CUSTOMER_CREDIT_NOTE: overrides the REVENUE line (default 4000).
+   * Ignored for MANUAL_JOURNAL, PRIOR_PERIOD_ADJUSTMENT, payment types, and non-invoice types.
+   * When omitted, the engine uses the account from transaction_type_mappings.
+   */
+  account_code?: string;
+
+  /**
+   * Override the default tax treatment for VAT-bearing amount-based types.
+   * Controls the VAT rate applied during expansion and whether a VAT line is generated.
+   * When omitted, defaults to STANDARD_VAT_20 (20% UK VAT) for invoice/credit note types.
+   * Ignored for payment types, bank types, and explicit-line types.
+   */
+  tax_code?: TaxCode;
   /** For manual / prior-period entries — explicit debit/credit lines. */
   lines?: JournalLine[];
   counterparty?: Counterparty;

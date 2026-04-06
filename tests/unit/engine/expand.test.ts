@@ -465,3 +465,250 @@ describe('expandToPostingLines — CUSTOMER_PAYMENT', () => {
     expect(totalDebit).toBe(totalCredit);
   });
 });
+
+// ---------------------------------------------------------------------------
+// expandToPostingLines — SUPPLIER_INVOICE with account_code override
+// ---------------------------------------------------------------------------
+
+describe('expandToPostingLines — SUPPLIER_INVOICE with account_code override', () => {
+  const mappings: MappingRow[] = [
+    { transaction_type: 'SUPPLIER_INVOICE', line_role: 'EXPENSE', account_code: '5000', direction: 'DEBIT', description: 'COGS' },
+    { transaction_type: 'SUPPLIER_INVOICE', line_role: 'VAT_INPUT', account_code: '1200', direction: 'DEBIT', description: 'VAT input' },
+    { transaction_type: 'SUPPLIER_INVOICE', line_role: 'CREDITORS', account_code: '2000', direction: 'CREDIT', description: 'Trade creditors' },
+  ];
+
+  it('overrides the EXPENSE account when account_code is set', () => {
+    const lines = expandToPostingLines(
+      { transaction_type: 'SUPPLIER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 600, account_code: '6800' },
+      mappings,
+    );
+    const expense = lines.find((l) => l.debit > 0 && l.account_code !== '1200');
+    expect(expense?.account_code).toBe('6800');
+  });
+
+  it('does not override CREDITORS or VAT_INPUT accounts', () => {
+    const lines = expandToPostingLines(
+      { transaction_type: 'SUPPLIER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 600, account_code: '6800' },
+      mappings,
+    );
+    expect(lines.find((l) => l.account_code === '2000')).toBeDefined();
+    expect(lines.find((l) => l.account_code === '1200')).toBeDefined();
+  });
+
+  it('lines balance with account override', () => {
+    const lines = expandToPostingLines(
+      { transaction_type: 'SUPPLIER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 600, account_code: '6800' },
+      mappings,
+    );
+    const totalDebit = lines.reduce((s, l) => s + l.debit, 0);
+    const totalCredit = lines.reduce((s, l) => s + l.credit, 0);
+    expect(new Decimal(totalDebit).toFixed(2)).toBe(new Decimal(totalCredit).toFixed(2));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// expandToPostingLines — SUPPLIER_INVOICE with tax_code override
+// ---------------------------------------------------------------------------
+
+describe('expandToPostingLines — SUPPLIER_INVOICE with tax_code override', () => {
+  const mappings: MappingRow[] = [
+    { transaction_type: 'SUPPLIER_INVOICE', line_role: 'EXPENSE', account_code: '5000', direction: 'DEBIT', description: 'COGS' },
+    { transaction_type: 'SUPPLIER_INVOICE', line_role: 'VAT_INPUT', account_code: '1200', direction: 'DEBIT', description: 'VAT input' },
+    { transaction_type: 'SUPPLIER_INVOICE', line_role: 'CREDITORS', account_code: '2000', direction: 'CREDIT', description: 'Trade creditors' },
+  ];
+
+  it('OUTSIDE_SCOPE: no VAT line, full amount to expense and creditors', () => {
+    const lines = expandToPostingLines(
+      { transaction_type: 'SUPPLIER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 500, tax_code: 'OUTSIDE_SCOPE' },
+      mappings,
+    );
+    expect(lines).toHaveLength(2);
+    expect(lines.find((l) => l.account_code === '5000')?.debit).toBe(500);
+    expect(lines.find((l) => l.account_code === '2000')?.credit).toBe(500);
+    expect(lines.find((l) => l.account_code === '1200')).toBeUndefined();
+  });
+
+  it('ZERO_RATED: no VAT line', () => {
+    const lines = expandToPostingLines(
+      { transaction_type: 'SUPPLIER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 500, tax_code: 'ZERO_RATED' },
+      mappings,
+    );
+    expect(lines).toHaveLength(2);
+    expect(lines.find((l) => l.account_code === '1200')).toBeUndefined();
+  });
+
+  it('EXEMPT: no VAT line', () => {
+    const lines = expandToPostingLines(
+      { transaction_type: 'SUPPLIER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 500, tax_code: 'EXEMPT' },
+      mappings,
+    );
+    expect(lines).toHaveLength(2);
+  });
+
+  it('REDUCED_VAT_5: splits at 5%', () => {
+    const lines = expandToPostingLines(
+      { transaction_type: 'SUPPLIER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 105, tax_code: 'REDUCED_VAT_5' },
+      mappings,
+    );
+    expect(lines).toHaveLength(3);
+    expect(lines.find((l) => l.account_code === '5000')?.debit).toBe(100);
+    expect(lines.find((l) => l.account_code === '1200')?.debit).toBe(5);
+    expect(lines.find((l) => l.account_code === '2000')?.credit).toBe(105);
+  });
+
+  it('STANDARD_VAT_20 explicit: same as default', () => {
+    const lines = expandToPostingLines(
+      { transaction_type: 'SUPPLIER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 600, tax_code: 'STANDARD_VAT_20' },
+      mappings,
+    );
+    expect(lines).toHaveLength(3);
+    expect(lines.find((l) => l.account_code === '5000')?.debit).toBe(500);
+  });
+
+  it('lines balance when OUTSIDE_SCOPE', () => {
+    const lines = expandToPostingLines(
+      { transaction_type: 'SUPPLIER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 500, tax_code: 'OUTSIDE_SCOPE' },
+      mappings,
+    );
+    expect(lines.reduce((s, l) => s + l.debit, 0)).toBe(lines.reduce((s, l) => s + l.credit, 0));
+  });
+
+  it('lines balance when REDUCED_VAT_5', () => {
+    const lines = expandToPostingLines(
+      { transaction_type: 'SUPPLIER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 105, tax_code: 'REDUCED_VAT_5' },
+      mappings,
+    );
+    const totalDebit = lines.reduce((s, l) => s + l.debit, 0);
+    const totalCredit = lines.reduce((s, l) => s + l.credit, 0);
+    expect(new Decimal(totalDebit).toFixed(2)).toBe(new Decimal(totalCredit).toFixed(2));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// expandToPostingLines — combined account_code + tax_code overrides
+// ---------------------------------------------------------------------------
+
+describe('expandToPostingLines — combined overrides', () => {
+  const mappings: MappingRow[] = [
+    { transaction_type: 'SUPPLIER_INVOICE', line_role: 'EXPENSE', account_code: '5000', direction: 'DEBIT', description: 'COGS' },
+    { transaction_type: 'SUPPLIER_INVOICE', line_role: 'VAT_INPUT', account_code: '1200', direction: 'DEBIT', description: 'VAT input' },
+    { transaction_type: 'SUPPLIER_INVOICE', line_role: 'CREDITORS', account_code: '2000', direction: 'CREDIT', description: 'Trade creditors' },
+  ];
+
+  it('overseas IT support: account 6800, OUTSIDE_SCOPE, no VAT', () => {
+    const lines = expandToPostingLines(
+      { transaction_type: 'SUPPLIER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 500, account_code: '6800', tax_code: 'OUTSIDE_SCOPE' },
+      mappings,
+    );
+    expect(lines).toHaveLength(2);
+    const expense = lines.find((l) => l.debit > 0);
+    expect(expense?.account_code).toBe('6800');
+    expect(expense?.debit).toBe(500);
+    const creditors = lines.find((l) => l.credit > 0);
+    expect(creditors?.account_code).toBe('2000');
+    expect(creditors?.credit).toBe(500);
+    expect(lines.find((l) => l.account_code === '1200')).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// expandToPostingLines — CUSTOMER_INVOICE with overrides
+// ---------------------------------------------------------------------------
+
+describe('expandToPostingLines — CUSTOMER_INVOICE with overrides', () => {
+  const mappings: MappingRow[] = [
+    { transaction_type: 'CUSTOMER_INVOICE', line_role: 'DEBTORS', account_code: '1100', direction: 'DEBIT', description: 'Trade debtors' },
+    { transaction_type: 'CUSTOMER_INVOICE', line_role: 'REVENUE', account_code: '4000', direction: 'CREDIT', description: 'Sales revenue' },
+    { transaction_type: 'CUSTOMER_INVOICE', line_role: 'VAT_OUTPUT', account_code: '2100', direction: 'CREDIT', description: 'VAT output' },
+  ];
+
+  it('overrides REVENUE account', () => {
+    const lines = expandToPostingLines(
+      { transaction_type: 'CUSTOMER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 1200, account_code: '4100' },
+      mappings,
+    );
+    expect(lines.find((l) => l.account_code === '4100')?.credit).toBe(1000);
+  });
+
+  it('ZERO_RATED: no VAT line', () => {
+    const lines = expandToPostingLines(
+      { transaction_type: 'CUSTOMER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 500, tax_code: 'ZERO_RATED' },
+      mappings,
+    );
+    expect(lines).toHaveLength(2);
+    expect(lines.find((l) => l.account_code === '2100')).toBeUndefined();
+    expect(lines.find((l) => l.account_code === '1100')?.debit).toBe(500);
+    expect(lines.find((l) => l.account_code === '4000')?.credit).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// expandToPostingLines — SUPPLIER_CREDIT_NOTE with overrides
+// ---------------------------------------------------------------------------
+
+describe('expandToPostingLines — SUPPLIER_CREDIT_NOTE with overrides', () => {
+  const mappings: MappingRow[] = [
+    { transaction_type: 'SUPPLIER_CREDIT_NOTE', line_role: 'CREDITORS', account_code: '2000', direction: 'DEBIT', description: 'Trade creditors — credit note' },
+    { transaction_type: 'SUPPLIER_CREDIT_NOTE', line_role: 'EXPENSE', account_code: '5000', direction: 'CREDIT', description: 'COGS — credit note reversal' },
+    { transaction_type: 'SUPPLIER_CREDIT_NOTE', line_role: 'VAT_INPUT', account_code: '1200', direction: 'CREDIT', description: 'VAT input — credit note reversal' },
+  ];
+
+  it('overrides EXPENSE account on credit note', () => {
+    const lines = expandToPostingLines(
+      { transaction_type: 'SUPPLIER_CREDIT_NOTE', date: '2026-03-15', period_id: '2026-03', amount: 600, account_code: '6800' },
+      mappings,
+    );
+    expect(lines.find((l) => l.account_code === '6800')?.credit).toBe(500);
+  });
+
+  it('OUTSIDE_SCOPE credit note: no VAT line', () => {
+    const lines = expandToPostingLines(
+      { transaction_type: 'SUPPLIER_CREDIT_NOTE', date: '2026-03-15', period_id: '2026-03', amount: 500, tax_code: 'OUTSIDE_SCOPE' },
+      mappings,
+    );
+    expect(lines).toHaveLength(2);
+    expect(lines.find((l) => l.account_code === '1200')).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// splitGrossAmount — with tax code parameter
+// ---------------------------------------------------------------------------
+
+describe('splitGrossAmount — with tax code', () => {
+  it('OUTSIDE_SCOPE: net equals gross, vat is zero', () => {
+    const { net, vat } = splitGrossAmount(new Decimal('500'), 'OUTSIDE_SCOPE');
+    expect(net.toFixed(2)).toBe('500.00');
+    expect(vat.toFixed(2)).toBe('0.00');
+  });
+
+  it('REDUCED_VAT_5: splits at 5%', () => {
+    const { net, vat } = splitGrossAmount(new Decimal('105'), 'REDUCED_VAT_5');
+    expect(net.toFixed(2)).toBe('100.00');
+    expect(vat.toFixed(2)).toBe('5.00');
+  });
+
+  it('STANDARD_VAT_20: same as default', () => {
+    const { net, vat } = splitGrossAmount(new Decimal('1200'), 'STANDARD_VAT_20');
+    expect(net.toFixed(2)).toBe('1000.00');
+    expect(vat.toFixed(2)).toBe('200.00');
+  });
+
+  it('undefined tax code: defaults to 20%', () => {
+    const { net, vat } = splitGrossAmount(new Decimal('1200'), undefined);
+    expect(net.toFixed(2)).toBe('1000.00');
+    expect(vat.toFixed(2)).toBe('200.00');
+  });
+
+  it('ZERO_RATED: net equals gross', () => {
+    const { net, vat } = splitGrossAmount(new Decimal('500'), 'ZERO_RATED');
+    expect(net.toFixed(2)).toBe('500.00');
+    expect(vat.toFixed(2)).toBe('0.00');
+  });
+
+  it('EXEMPT: net equals gross', () => {
+    const { net, vat } = splitGrossAmount(new Decimal('500'), 'EXEMPT');
+    expect(net.toFixed(2)).toBe('500.00');
+    expect(vat.toFixed(2)).toBe('0.00');
+  });
+});

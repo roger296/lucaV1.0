@@ -30,6 +30,18 @@ const AMOUNT_BASED_TYPES = new Set<string>([
   'DEPRECIATION',
 ]);
 
+/** Valid tax codes for the tax_code override field. */
+const VALID_TAX_CODES = new Set<string>([
+  'STANDARD_VAT_20', 'REDUCED_VAT_5', 'ZERO_RATED',
+  'EXEMPT', 'OUTSIDE_SCOPE', 'REVERSE_CHARGE', 'POSTPONED_VAT',
+]);
+
+/** Amount-based types that support account_code and tax_code overrides (VAT-bearing invoice types). */
+const OVERRIDE_SUPPORTED_TYPES = new Set<string>([
+  'CUSTOMER_INVOICE', 'SUPPLIER_INVOICE',
+  'CUSTOMER_CREDIT_NOTE', 'SUPPLIER_CREDIT_NOTE',
+]);
+
 /**
  * Top-level submission validator.
  *
@@ -77,6 +89,33 @@ export function validateSubmission(submission: TransactionSubmission): void {
       throw new ValidationError(
         `${transaction_type} is expanded automatically; do not supply explicit lines`,
       );
+    }
+
+    // Validate optional account_code override
+    if (submission.account_code !== undefined) {
+      const code = submission.account_code.trim();
+      if (code === '') {
+        throw new ValidationError('account_code must not be empty when provided');
+      }
+      if (!OVERRIDE_SUPPORTED_TYPES.has(transaction_type)) {
+        throw new ValidationError(
+          `account_code override is not supported for ${transaction_type}`,
+        );
+      }
+    }
+
+    // Validate optional tax_code override
+    if (submission.tax_code !== undefined) {
+      if (!VALID_TAX_CODES.has(submission.tax_code)) {
+        throw new ValidationError(
+          `invalid tax_code: ${submission.tax_code}. Valid values: ${[...VALID_TAX_CODES].join(', ')}`,
+        );
+      }
+      if (!OVERRIDE_SUPPORTED_TYPES.has(transaction_type)) {
+        throw new ValidationError(
+          `tax_code override is not supported for ${transaction_type}`,
+        );
+      }
     }
   } else {
     throw new ValidationError(`unknown transaction_type: ${transaction_type}`);

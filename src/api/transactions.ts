@@ -73,6 +73,8 @@ transactionsRouter.post('/bulk', requirePermission('transaction:post'), async (r
           idempotency_key: txn['idempotency_key'] as string | undefined,
           counterparty: txn['counterparty'] as { trading_account_id?: string; contact_id?: string } | undefined,
           lines: txn['lines'] as Array<{ account_code: string; description: string; debit: number; credit: number }> | undefined,
+          account_code: txn['account_code'] as string | undefined,
+          tax_code: txn['tax_code'] as import('../engine/types').TaxCode | undefined,
         };
         const result = await postTransaction(submission);
         if (result.status === 'COMMITTED') {

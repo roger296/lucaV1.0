@@ -281,6 +281,90 @@ describe('validateSubmission', () => {
       }),
     ).toThrow(ValidationError);
   });
+
+  // ── account_code and tax_code override validation ─────────────────────
+
+  it('accepts SUPPLIER_INVOICE with valid account_code', () => {
+    expect(() =>
+      validateSubmission({ transaction_type: 'SUPPLIER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 500, account_code: '6800' }),
+    ).not.toThrow();
+  });
+
+  it('accepts SUPPLIER_INVOICE with valid tax_code', () => {
+    expect(() =>
+      validateSubmission({ transaction_type: 'SUPPLIER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 500, tax_code: 'OUTSIDE_SCOPE' }),
+    ).not.toThrow();
+  });
+
+  it('accepts SUPPLIER_INVOICE with both overrides', () => {
+    expect(() =>
+      validateSubmission({ transaction_type: 'SUPPLIER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 500, account_code: '6800', tax_code: 'OUTSIDE_SCOPE' }),
+    ).not.toThrow();
+  });
+
+  it('accepts CUSTOMER_INVOICE with account_code', () => {
+    expect(() =>
+      validateSubmission({ transaction_type: 'CUSTOMER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 1200, account_code: '4100' }),
+    ).not.toThrow();
+  });
+
+  it('accepts CUSTOMER_CREDIT_NOTE with tax_code', () => {
+    expect(() =>
+      validateSubmission({ transaction_type: 'CUSTOMER_CREDIT_NOTE', date: '2026-03-15', period_id: '2026-03', amount: 1200, tax_code: 'ZERO_RATED' }),
+    ).not.toThrow();
+  });
+
+  it('accepts SUPPLIER_CREDIT_NOTE with account_code', () => {
+    expect(() =>
+      validateSubmission({ transaction_type: 'SUPPLIER_CREDIT_NOTE', date: '2026-03-15', period_id: '2026-03', amount: 600, account_code: '6800' }),
+    ).not.toThrow();
+  });
+
+  it('rejects empty account_code', () => {
+    expect(() =>
+      validateSubmission({ transaction_type: 'SUPPLIER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 500, account_code: '' }),
+    ).toThrow(ValidationError);
+  });
+
+  it('rejects invalid tax_code', () => {
+    expect(() =>
+      validateSubmission({
+        transaction_type: 'SUPPLIER_INVOICE', date: '2026-03-15', period_id: '2026-03', amount: 500,
+        // @ts-expect-error testing invalid tax code
+        tax_code: 'INVALID_CODE',
+      }),
+    ).toThrow(ValidationError);
+  });
+
+  it('rejects account_code on CUSTOMER_PAYMENT', () => {
+    expect(() =>
+      validateSubmission({ transaction_type: 'CUSTOMER_PAYMENT', date: '2026-03-15', period_id: '2026-03', amount: 500, account_code: '6800' }),
+    ).toThrow(ValidationError);
+  });
+
+  it('rejects tax_code on SUPPLIER_PAYMENT', () => {
+    expect(() =>
+      validateSubmission({
+        transaction_type: 'SUPPLIER_PAYMENT', date: '2026-03-15', period_id: '2026-03', amount: 500,
+        tax_code: 'OUTSIDE_SCOPE',
+      }),
+    ).toThrow(ValidationError);
+  });
+
+  it('rejects account_code on BANK_PAYMENT', () => {
+    expect(() =>
+      validateSubmission({ transaction_type: 'BANK_PAYMENT', date: '2026-03-15', period_id: '2026-03', amount: 75, account_code: '6800' }),
+    ).toThrow(ValidationError);
+  });
+
+  it('rejects tax_code on BANK_RECEIPT', () => {
+    expect(() =>
+      validateSubmission({
+        transaction_type: 'BANK_RECEIPT', date: '2026-03-15', period_id: '2026-03', amount: 250,
+        tax_code: 'ZERO_RATED',
+      }),
+    ).toThrow(ValidationError);
+  });
 });
 
 // ---------------------------------------------------------------------------
