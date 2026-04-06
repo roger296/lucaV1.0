@@ -29,7 +29,7 @@ transactionsRouter.get('/', requirePermission('transaction:view'), async (req: R
       });
     }
 
-    const total = await query.clone().count<[{ count: string }]>('transaction_id as count').first();
+    const total = await query.clone().clear('order').count<[{ count: string }]>('transaction_id as count').first();
     const rows = await query.limit(parseInt(limit, 10)).offset(parseInt(offset, 10));
 
     res.json({
