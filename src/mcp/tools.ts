@@ -799,6 +799,35 @@ export async function handleHardClosePeriod(args: Record<string, unknown>): Prom
 }
 
 // ---------------------------------------------------------------------------
+// gl_open_period
+// ---------------------------------------------------------------------------
+
+export const openPeriodSchema = {
+  period_id: z.string().describe("The period to open (e.g. '2026-04'). Must be YYYY-MM format."),
+};
+
+export async function handleOpenPeriod(args: Record<string, unknown>): Promise<ToolResult> {
+  try {
+    const period_id = args['period_id'] as string;
+    const { openPeriod } = await import('../engine/periods');
+    const { ChainWriter } = await import('../chain/writer');
+    const { config } = await import('../config');
+    const { db } = await import('../db/connection');
+    const chainWriter = new ChainWriter({
+      chainDir: config.chainDir,
+      getPeriodStatus: async (pid: string) => {
+        const row = await db('periods').where('period_id', pid).select('status').first<{ status: string }>();
+        return (row?.status as 'OPEN' | 'SOFT_CLOSE' | 'HARD_CLOSE' | null) ?? null;
+      },
+    });
+    const result = await openPeriod(period_id, { chainWriter });
+    return ok(result);
+  } catch (e) {
+    return wrapError(e);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // gl_create_account
 // ---------------------------------------------------------------------------
 

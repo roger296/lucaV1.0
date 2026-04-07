@@ -74,15 +74,29 @@ export async function postTransaction(
     // ── 1b. Period status check — reject hard-closed periods early ──────────
     // This check runs BEFORE approval evaluation so that even staged transactions
     // cannot be submitted to closed periods.
-    const periodRow = await trx('periods')
+    let periodRow = await trx('periods')
       .where('period_id', submission.period_id)
       .select('status')
       .first<{ status: string } | undefined>();
 
-    if (periodRow?.status === 'HARD_CLOSE') {
+    if (!periodRow) {
+      // Period doesn't exist — auto-create it on the fly.
+      const { openPeriod } = await import('./periods');
+      const autoChainWriter = chainWriterOverride ?? new ChainWriter({
+        chainDir: CHAIN_DIR,
+        getPeriodStatus: async (pid: string) => {
+          const row = await trx('periods').where('period_id', pid).select('status').first<{ status: string }>();
+          return (row?.status as 'OPEN' | 'SOFT_CLOSE' | 'HARD_CLOSE' | null) ?? null;
+        },
+      });
+      await openPeriod(submission.period_id, { chainWriter: autoChainWriter });
+      periodRow = { status: 'OPEN' };
+    }
+
+    if (periodRow.status === 'HARD_CLOSE') {
       throw new PeriodClosedError(submission.period_id);
     }
-    if (periodRow?.status === 'SOFT_CLOSE' && !submission.soft_close_override) {
+    if (periodRow.status === 'SOFT_CLOSE' && !submission.soft_close_override) {
       throw new PeriodSoftClosedError(submission.period_id);
     }
     let lines: PostingLine[];

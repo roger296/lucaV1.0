@@ -120,6 +120,33 @@ Verify the integrity of the hash chain for a specific accounting period.
 
 ## Period Management
 
+### `gl_open_period`
+
+**Purpose:** Open a new accounting period. Multiple periods can be open simultaneously — this is normal during month-end close when the previous month is still being finalised while the new month's operational transactions need to flow.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `period_id` | string | Yes | The period to open (YYYY-MM format, e.g. `2026-04`) |
+
+**Response:**
+
+| Field | Description |
+|---|---|
+| `period_id` | The opened period |
+| `status` | Always `OPEN` |
+| `start_date` | First day of the month |
+| `end_date` | Last day of the month |
+| `opened_at` | Timestamp |
+| `is_new` | `true` if newly created, `false` if it already existed |
+
+**Errors:**
+- If the period exists and is `HARD_CLOSE`, returns an error — sealed periods cannot be reopened.
+- Invalid `period_id` format returns a validation error.
+
+---
+
 ### gl_soft_close_period
 Transition an accounting period from OPEN to SOFT_CLOSE. After soft-close, all new transactions
 for this period require approval. The period's end date must have passed.

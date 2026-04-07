@@ -276,6 +276,11 @@ export class ChainWriter {
       previous_period_id: previousPeriodId,
       previous_period_closing_hash: previousPeriodClosingHash,
       opening_balances: openingBalances,
+      open_mode: previousPeriodId === null && Object.keys(openingBalances).length === 0
+        ? 'INDEPENDENT'
+        : previousPeriodId === null
+          ? 'GENESIS'
+          : 'SEQUENTIAL',
     };
 
     const entry: ChainEntry = {

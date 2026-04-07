@@ -145,6 +145,93 @@ export async function softClosePeriod(
   });
 }
 
+// ── Public result type ──────────────────────────────────────────────────────
+
+export interface OpenPeriodResult {
+  period_id: string;
+  status: 'OPEN';
+  start_date: string;
+  end_date: string;
+  opened_at: string;
+  is_new: boolean;
+}
+
+/**
+ * Opens (or returns) an accounting period.
+ *
+ * If the period already exists and is OPEN or SOFT_CLOSE, returns it.
+ * If the period does not exist, creates a new DB row and chain genesis file.
+ * If the period exists and is HARD_CLOSE, throws — a sealed period cannot be reopened.
+ */
+export async function openPeriod(
+  periodId: string,
+  opts: {
+    chainWriter: ChainWriter;
+  },
+): Promise<OpenPeriodResult> {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(periodId)) {
+    throw new Error(`Invalid period_id format: "${periodId}". Expected YYYY-MM.`);
+  }
+
+  return db.transaction(async (trx) => {
+    const existing = await trx<PeriodRow>('periods')
+      .where('period_id', periodId)
+      .forUpdate()
+      .first();
+
+    if (existing) {
+      if (existing.status === 'HARD_CLOSE') {
+        throw new InvalidPeriodStateError(periodId, 'HARD_CLOSE', 'OPEN or not yet created');
+      }
+      return {
+        period_id: existing.period_id,
+        status: 'OPEN' as const,
+        start_date: existing.start_date,
+        end_date: existing.end_date,
+        opened_at: existing.opened_at,
+        is_new: false,
+      };
+    }
+
+    const { startDate, endDate } = computePeriodDates(periodId);
+    const now = new Date().toISOString();
+
+    await trx('periods').insert({
+      period_id: periodId,
+      start_date: startDate,
+      end_date: endDate,
+      status: 'OPEN',
+      data_flag: 'PROVISIONAL',
+      opened_at: now,
+    });
+
+    await trx('chain_metadata')
+      .insert({
+        period_id: periodId,
+        last_sequence: 0,
+        last_entry_hash: null,
+        entry_count: 0,
+        last_verified_at: null,
+        chain_valid: null,
+      })
+      .onConflict('period_id')
+      .ignore();
+
+    await opts.chainWriter.createPeriodFile(periodId, null, {});
+
+    publishEvent('PERIOD_OPENED', { period_id: periodId, opened_at: now });
+
+    return {
+      period_id: periodId,
+      status: 'OPEN' as const,
+      start_date: startDate,
+      end_date: endDate,
+      opened_at: now,
+      is_new: true,
+    };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // hardClosePeriod
 // ---------------------------------------------------------------------------

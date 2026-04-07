@@ -28,6 +28,7 @@ export interface GenesisPayload {
   previous_period_id: string | null;
   previous_period_closing_hash: string | null;
   opening_balances: Record<string, { debit: number; credit: number }>;
+  open_mode?: 'GENESIS' | 'SEQUENTIAL' | 'INDEPENDENT';
 }
 
 /** Payload for the final entry in a period's chain file. */

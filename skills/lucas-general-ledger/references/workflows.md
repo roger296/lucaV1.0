@@ -303,9 +303,11 @@ Explain the difference if needed:
 ### Step 2 — Check the pre-conditions
 
 Before closing, verify the period is ready:
-1. Call `gl_get_trial_balance` — confirm it balances
-2. Call `gl_get_dashboard_summary` — check pending approvals
-3. If there are pending approvals, ask the user if they want to review them now
+1. Call `gl_get_period_status` to confirm the period exists and check its status.
+   - If the period does not exist — call `gl_open_period` to create it, then proceed. This is normal when the calendar has moved to a new month but the period hasn't been opened yet.
+2. Call `gl_get_trial_balance` — confirm it balances
+3. Call `gl_get_dashboard_summary` — check pending approvals
+4. If there are pending approvals, ask the user if they want to review them now
 
 ### Step 3 — Soft close
 

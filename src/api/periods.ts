@@ -52,6 +52,23 @@ periodsRouter.get('/current', requirePermission('period:view'), async (_req: Req
   }
 });
 
+/** POST /api/periods — Open a new period */
+periodsRouter.post('/', requirePermission('period:hard_close'), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { period_id } = req.body as { period_id: string };
+    if (!period_id) {
+      res.status(400).json({ success: false, error: { code: 'MISSING_PARAM', message: 'period_id is required' } });
+      return;
+    }
+    const { openPeriod } = await import('../engine/periods');
+    const chainWriter = makeChainWriter();
+    const result = await openPeriod(period_id, { chainWriter });
+    res.status(result.is_new ? 201 : 200).json({ success: true, data: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
 /** GET /api/periods/:id */
 periodsRouter.get('/:id', requirePermission('period:view'), async (req: Request, res: Response, next: NextFunction) => {
   try {

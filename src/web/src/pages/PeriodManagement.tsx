@@ -176,6 +176,10 @@ export function PeriodManagement() {
   const { data: periods, loading, error, refetch } = usePeriods();
   const [selectedPeriod, setSelectedPeriod] = useState<string | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<Set<string>>(new Set());
+  const [showOpenModal, setShowOpenModal] = useState(false);
+  const [newPeriodId, setNewPeriodId] = useState('');
+  const [openModalBusy, setOpenModalBusy] = useState(false);
+  const [openModalError, setOpenModalError] = useState('');
 
   function toggleDetail(id: string) {
     setExpandedDetail((prev) => {
@@ -187,6 +191,40 @@ export function PeriodManagement() {
     setSelectedPeriod(id);
   }
 
+  function getDefaultNewPeriodId(): string {
+    if (!periods || periods.length === 0) {
+      const now = new Date();
+      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
+    // Find the latest period_id and suggest the next month
+    const latest = [...periods].sort((a: Period, b: Period) => b.period_id.localeCompare(a.period_id))[0] as Period;
+    const [yearStr, monthStr] = latest.period_id.split('-') as [string, string];
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10);
+    if (month === 12) return `${year + 1}-01`;
+    return `${year}-${String(month + 1).padStart(2, '0')}`;
+  }
+
+  function openModal() {
+    setNewPeriodId(getDefaultNewPeriodId());
+    setOpenModalError('');
+    setShowOpenModal(true);
+  }
+
+  async function doOpenPeriod() {
+    setOpenModalBusy(true);
+    setOpenModalError('');
+    try {
+      await apiPost('/api/periods', { period_id: newPeriodId });
+      setShowOpenModal(false);
+      refetch();
+    } catch (e) {
+      setOpenModalError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOpenModalBusy(false);
+    }
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -196,8 +234,59 @@ export function PeriodManagement() {
             Open, soft-close, and hard-close accounting periods
           </div>
         </div>
-        <button className="btn btn-ghost btn-sm" onClick={refetch}>↺ Refresh</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-primary btn-sm" onClick={openModal}>+ Open Period</button>
+          <button className="btn btn-ghost btn-sm" onClick={refetch}>↺ Refresh</button>
+        </div>
       </div>
+
+      {showOpenModal && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowOpenModal(false); }}
+        >
+          <div style={{ background: '#fff', borderRadius: 8, padding: 24, minWidth: 320, boxShadow: '0 4px 24px rgba(0,0,0,0.18)' }}>
+            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 16 }}>Open Accounting Period</div>
+            <label style={{ display: 'block', fontSize: 13, color: '#6c757d', marginBottom: 4 }}>
+              Period (YYYY-MM)
+            </label>
+            <input
+              type="text"
+              className="form-control"
+              value={newPeriodId}
+              onChange={(e) => setNewPeriodId(e.target.value)}
+              placeholder="e.g. 2026-04"
+              style={{ width: '100%', marginBottom: 16, padding: '8px 10px', border: '1px solid #ced4da', borderRadius: 4, fontSize: 14 }}
+              disabled={openModalBusy}
+            />
+            {openModalError && (
+              <div className="alert alert-error" style={{ fontSize: 13, marginBottom: 12 }}>
+                {openModalError}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => setShowOpenModal(false)}
+                disabled={openModalBusy}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={() => void doOpenPeriod()}
+                disabled={openModalBusy || !newPeriodId}
+              >
+                {openModalBusy ? 'Opening…' : 'Open Period'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
 
       {error && <div className="alert alert-error">{error}</div>}
 
