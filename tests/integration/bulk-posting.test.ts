@@ -87,6 +87,25 @@ describe('gl_bulk_post_transactions MCP tool', () => {
     expect(data.results[1]).toHaveProperty('status', 'ERROR');
   });
 
+  it('should handle transactions passed as JSON strings', async () => {
+    const stringifiedTxns = [
+      JSON.stringify({
+        transaction_type: 'CUSTOMER_INVOICE',
+        date: '2076-03-20',
+        period_id: TEST_PERIOD,
+        reference: 'STRING-TEST-001',
+        description: 'Test — string element',
+        amount: 10.00,
+      }),
+    ];
+    const result = await handleBulkPostTransactions({ transactions: stringifiedTxns });
+    expect(result.isError).toBeFalsy();
+    const data = JSON.parse(result.content[0]!.text) as { total: number; errors: number; results: Array<{ status: string }> };
+    expect(data.total).toBe(1);
+    expect(data.errors).toBe(0);
+    expect(data.results[0]).toHaveProperty('status', 'COMMITTED');
+  });
+
   it('stops at first error when stop_on_error is true', async () => {
     const result = await handleBulkPostTransactions({
       transactions: [

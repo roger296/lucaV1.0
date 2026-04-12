@@ -164,7 +164,11 @@ async function dispatch(req: JsonRpcRequest): Promise<JsonRpcResponse> {
 
     case 'tools/call': {
       const toolName = params['name'] as string | undefined;
-      const args = (params['arguments'] ?? {}) as Record<string, unknown>;
+      let args = params['arguments'] ?? {};
+      if (typeof args === 'string') {
+        args = JSON.parse(args);
+      }
+      const typedArgs = args as Record<string, unknown>;
 
       if (!toolName) return err(id, -32602, 'Missing tool name');
 
@@ -172,7 +176,7 @@ async function dispatch(req: JsonRpcRequest): Promise<JsonRpcResponse> {
       if (!tool) return err(id, -32602, `Unknown tool: ${toolName}`);
 
       try {
-        const result = await tool.handler(args);
+        const result = await tool.handler(typedArgs);
         return ok(id, result);
       } catch (e) {
         return err(id, -32603, e instanceof Error ? e.message : 'Tool execution failed');

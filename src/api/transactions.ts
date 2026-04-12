@@ -129,7 +129,11 @@ transactionsRouter.get('/:id', requirePermission('transaction:view'), async (req
     const lines = await db('transaction_lines')
       .where('transaction_id', id)
       .orderBy('debit', 'desc');
-    res.json({ success: true, data: { ...txn, lines } });
+    const documents = await db('inbox_documents')
+      .where('assigned_transaction_id', id)
+      .select('id', 'filename', 'mime_type', 'document_type', 'file_size', 'completed_at')
+      .orderBy('completed_at', 'desc');
+    res.json({ success: true, data: { ...txn, lines, documents } });
   } catch (err) {
     next(err);
   }

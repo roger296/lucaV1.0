@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useStaging } from '../hooks/useStaging';
 import { apiPost } from '../hooks/useApi';
 import { TxTypeBadge, StagingStatusBadge } from '../components/StatusBadge';
+import { DocumentViewer } from '../components/DocumentViewer';
 import type { StagingEntry } from '../types';
 
 function fmt(val: string | number | null | undefined): string {
@@ -236,6 +237,7 @@ export function ApprovalQueue() {
                         <td colSpan={11}>
                           <div className="expand-panel">
                             <PayloadLines payload={item.payload} />
+                            <DocumentViewer documents={item.documents} />
                           </div>
                         </td>
                       </tr>

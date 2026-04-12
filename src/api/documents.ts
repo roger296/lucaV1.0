@@ -1,9 +1,35 @@
 import type { Request, Response, NextFunction } from 'express';
 import fs from 'node:fs';
 import { Router } from 'express';
-import { getDocumentById, getDocumentsByTransactionId } from '../engine/document-inbox';
+import { getDocumentById, getDocumentsByTransactionId, getDocumentsByStagingId } from '../engine/document-inbox';
 
 export const documentsRouter = Router();
+
+/** GET /api/documents/by-transaction/:txId — all documents for a committed transaction */
+documentsRouter.get(
+  '/by-transaction/:txId',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const docs = await getDocumentsByTransactionId(req.params['txId']!);
+      res.json({ success: true, data: docs });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/** GET /api/documents/by-staging/:stagingId — all documents for a staging entry */
+documentsRouter.get(
+  '/by-staging/:stagingId',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const docs = await getDocumentsByStagingId(req.params['stagingId']!);
+      res.json({ success: true, data: docs });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 /** GET /api/documents/:id — single document metadata */
 documentsRouter.get(

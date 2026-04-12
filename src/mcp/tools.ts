@@ -135,6 +135,7 @@ export const postTransactionSchema = {
   idempotency_key: z.string().optional(),
   submitted_by: z.string().optional(),
   soft_close_override: z.boolean().optional(),
+  source_document_id: z.string().optional().describe('UUID of an inbox_documents record to link to this transaction after posting'),
 };
 
 export async function handlePostTransaction(
@@ -156,6 +157,15 @@ export async function handlePostTransaction(
       account_code: args['account_code'] as string | undefined,
       tax_code: args['tax_code'] as import('../engine/types').TaxCode | undefined,
     });
+    if (args['source_document_id'] && result.status === 'COMMITTED') {
+      const { completeProcessing } = await import('../engine/document-inbox');
+      await completeProcessing({
+        document_id: args['source_document_id'] as string,
+        document_type: args['transaction_type'] as string,
+        transaction_id: (result as CommittedResult).transaction_id,
+        processing_notes: 'Auto-linked during gl_post_transaction posting',
+      });
+    }
     return ok(result);
   } catch (e) {
     return wrapError(e);
@@ -913,7 +923,7 @@ export async function handleUpdateAccount(args: Record<string, unknown>): Promis
 // ---------------------------------------------------------------------------
 
 export const bulkPostTransactionsSchema = {
-  transactions: z.array(z.object({
+  transactions: z.array(z.union([z.object({
     transaction_type: z.string().describe('Transaction type'),
     reference: z.string().optional().describe('Reference'),
     date: z.string().describe('Accounting date (YYYY-MM-DD)'),
@@ -931,7 +941,7 @@ export const bulkPostTransactionsSchema = {
       contact_id: z.string().optional(),
     }).optional(),
     idempotency_key: z.string().optional().describe('Unique key per transaction'),
-  })).describe('Array of transactions to post'),
+  }), z.string()])).describe('Array of transactions to post'),
   stop_on_error: z.boolean().default(false).describe('If true, stop processing at the first error. If false, continue and report all errors at the end.'),
 };
 
@@ -946,7 +956,20 @@ export async function handleBulkPostTransactions(args: Record<string, unknown>):
     const results: Array<Record<string, unknown>> = [];
 
     for (let i = 0; i < transactions.length; i++) {
-      const txn = transactions[i]!;
+      let txn = transactions[i]!;
+
+      // MCP JSON-RPC may deliver array elements as serialised JSON strings
+      if (typeof txn === 'string') {
+        try {
+          txn = JSON.parse(txn) as Record<string, unknown>;
+        } catch {
+          errors++;
+          results.push({ index: i, status: 'ERROR', error: 'Invalid JSON in transaction element' });
+          if (stopOnError) break;
+          continue;
+        }
+      }
+
       try {
         const submission = {
           transaction_type: txn['transaction_type'] as TransactionType,

@@ -85,6 +85,7 @@ export interface StagingEntry {
   reviewed_by: string | null;
   approval_rule_id: number | null;
   payload: string;
+  documents?: LinkedDocument[];
 }
 
 export interface TrialBalanceLine {
