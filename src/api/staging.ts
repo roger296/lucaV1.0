@@ -20,7 +20,29 @@ stagingRouter.get('/', requirePermission('transaction:view'), async (req: Reques
     if (period_id) query = query.where('period_id', period_id);
 
     const rows = await query;
-    res.json({ success: true, data: rows });
+
+    // Attach documents to each staging entry
+    const stagingIds = rows.map((r: { staging_id: string }) => r.staging_id);
+    const allDocs = stagingIds.length > 0
+      ? await db('inbox_documents')
+          .whereIn('assigned_staging_id', stagingIds)
+          .select('id', 'filename', 'mime_type', 'document_type', 'file_size', 'completed_at', 'assigned_staging_id')
+          .orderBy('completed_at', 'desc')
+      : [];
+
+    const docsByStagingId = new Map<string, typeof allDocs>();
+    for (const doc of allDocs) {
+      const sid = (doc as { assigned_staging_id: string }).assigned_staging_id;
+      if (!docsByStagingId.has(sid)) docsByStagingId.set(sid, []);
+      docsByStagingId.get(sid)!.push(doc);
+    }
+
+    const enrichedRows = rows.map((r: { staging_id: string }) => ({
+      ...r,
+      documents: docsByStagingId.get(r.staging_id) ?? [],
+    }));
+
+    res.json({ success: true, data: enrichedRows });
   } catch (err) {
     next(err);
   }

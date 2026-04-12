@@ -229,6 +229,18 @@ export async function getDocumentsByTransactionId(
 }
 
 /**
+ * Returns all documents linked to a given staging entry ID.
+ * Used by the API to show source documents on the Approval Queue page.
+ */
+export async function getDocumentsByStagingId(
+  stagingId: string,
+): Promise<InboxDocument[]> {
+  return db('inbox_documents')
+    .where('assigned_staging_id', stagingId)
+    .orderBy('completed_at', 'desc');
+}
+
+/**
  * Returns a single document by its ID (any status).
  */
 export async function getDocumentById(

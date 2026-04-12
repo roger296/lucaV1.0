@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useApi } from '../hooks/useApi';
 import { usePeriods } from '../hooks/usePeriods';
 import { TxTypeBadge, DataFlagBadge } from '../components/StatusBadge';
-import type { Transaction, TransactionLine, LinkedDocument } from '../types';
+import { DocumentViewer } from '../components/DocumentViewer';
+import type { Transaction, TransactionLine } from '../types';
 
 const TX_TYPES = [
   'MANUAL_JOURNAL',
@@ -21,7 +22,6 @@ function fmt(val: string | number | null | undefined): string {
 
 function ExpandedLines({ txId }: { txId: string }) {
   const { data: tx, loading, error } = useApi<Transaction>(`/api/transactions/${txId}`);
-  const { data: docs } = useApi<LinkedDocument[]>(`/api/transactions/${txId}/documents`);
 
   if (loading) return (
     <tr className="expanded-row">
@@ -61,43 +61,7 @@ function ExpandedLines({ txId }: { txId: string }) {
               ))}
             </tbody>
           </table>
-          {/* Source documents section */}
-          {docs && docs.length > 0 && (
-            <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid #e9ecef' }}>
-              <div style={{ fontSize: 11, color: '#6c757d', marginBottom: 4, fontWeight: 600 }}>
-                Source Documents
-              </div>
-              {docs.map((doc) => (
-                <a
-                  key={doc.id}
-                  href={`/api/documents/${doc.id}/file`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    padding: '4px 10px',
-                    marginRight: 8,
-                    fontSize: 12,
-                    color: '#0d6efd',
-                    background: '#f0f6ff',
-                    borderRadius: 4,
-                    textDecoration: 'none',
-                    border: '1px solid #c6dcf7',
-                  }}
-                >
-                  <span style={{ fontSize: 14 }}>📄</span>
-                  {doc.filename}
-                  {doc.file_size != null && (
-                    <span style={{ color: '#999', fontSize: 11 }}>
-                      ({(doc.file_size / 1024).toFixed(0)} KB)
-                    </span>
-                  )}
-                </a>
-              ))}
-            </div>
-          )}
+          <DocumentViewer documents={tx.documents} />
         </div>
       </td>
     </tr>
