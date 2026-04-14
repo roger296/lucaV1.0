@@ -129,9 +129,16 @@ export function expandToPostingLines(
       lineAmount = grossAmount;
     }
 
-    // Override EXPENSE or REVENUE account when account_code is provided
+    // Override the P&L account when account_code is provided.
+    // Applies to EXPENSE (SUPPLIER_INVOICE, BANK_PAYMENT), REVENUE
+    // (CUSTOMER_INVOICE) and INCOME (BANK_RECEIPT) line roles.
     let effectiveAccountCode = mapping.account_code;
-    if (account_code && (mapping.line_role === 'EXPENSE' || mapping.line_role === 'REVENUE')) {
+    if (
+      account_code &&
+      (mapping.line_role === 'EXPENSE' ||
+        mapping.line_role === 'REVENUE' ||
+        mapping.line_role === 'INCOME')
+    ) {
       effectiveAccountCode = account_code;
     }
 

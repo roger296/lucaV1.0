@@ -351,10 +351,16 @@ describe('validateSubmission', () => {
     ).toThrow(ValidationError);
   });
 
-  it('rejects account_code on BANK_PAYMENT', () => {
+  it('accepts account_code on BANK_PAYMENT (overrides the default expense account)', () => {
     expect(() =>
       validateSubmission({ transaction_type: 'BANK_PAYMENT', date: '2026-03-15', period_id: '2026-03', amount: 75, account_code: '6800' }),
-    ).toThrow(ValidationError);
+    ).not.toThrow();
+  });
+
+  it('accepts account_code on BANK_RECEIPT (overrides the default income account)', () => {
+    expect(() =>
+      validateSubmission({ transaction_type: 'BANK_RECEIPT', date: '2026-03-15', period_id: '2026-03', amount: 75, account_code: '4200' }),
+    ).not.toThrow();
   });
 
   it('rejects tax_code on BANK_RECEIPT', () => {

@@ -59,6 +59,39 @@ function wrapError(e: unknown): ToolResult {
   );
 }
 
+/**
+ * Parse an array that may contain objects OR JSON-encoded strings.
+ *
+ * Defensive against MCP client/schema-serialisation bugs where
+ * array-of-object parameters are flattened to array-of-string. When a caller
+ * sends stringified JSON for each item, we transparently parse and validate it;
+ * when they send proper objects, we validate directly.
+ */
+function parseArrayItems<T>(raw: unknown, schema: z.ZodType<T>, fieldName: string): T[] {
+  if (!Array.isArray(raw)) {
+    throw new Error(`${fieldName} must be an array, got ${typeof raw}`);
+  }
+  return raw.map((item, i) => {
+    let value: unknown = item;
+    if (typeof value === 'string') {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        throw new Error(
+          `${fieldName}[${i}] is a string but not valid JSON: ${String(item).slice(0, 100)}`,
+        );
+      }
+    }
+    const parsed = schema.safeParse(value);
+    if (!parsed.success) {
+      throw new Error(
+        `${fieldName}[${i}] failed validation: ${parsed.error.issues.map((iss) => `${iss.path.join('.')} ${iss.message}`).join('; ')}`,
+      );
+    }
+    return parsed.data;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // gl_post_transaction
 // ---------------------------------------------------------------------------
@@ -94,9 +127,10 @@ export const postTransactionSchema = {
     .optional()
     .describe(
       'Override the default expense/revenue account code. ' +
-      'For SUPPLIER_INVOICE: overrides expense account (default 5000). ' +
+      'For SUPPLIER_INVOICE / BANK_PAYMENT: overrides expense account (default 5000 / 6200). ' +
       'For CUSTOMER_INVOICE: overrides revenue account (default 4000). ' +
-      'Also works for credit note types. Ignored for payments and other types.',
+      'For BANK_RECEIPT: overrides income account (default 4100). ' +
+      'Also works for credit note types. Ignored for customer/supplier payments and other types.',
     ),
   tax_code: z
     .enum([
@@ -142,6 +176,29 @@ export async function handlePostTransaction(
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   try {
+    const lineSchema = z.object({
+      account_code: z.string(),
+      description: z.string().optional(),
+      debit: z.number(),
+      credit: z.number(),
+      cost_centre: z.string().optional(),
+    });
+    const rawLines = args['lines'];
+    const lines =
+      rawLines === undefined || rawLines === null
+        ? undefined
+        : parseArrayItems(rawLines, lineSchema, 'lines');
+
+    // Counterparty may arrive as a stringified JSON object; parse defensively.
+    let counterparty = args['counterparty'];
+    if (typeof counterparty === 'string') {
+      try {
+        counterparty = JSON.parse(counterparty);
+      } catch {
+        throw new Error('counterparty is a string but not valid JSON');
+      }
+    }
+
     const result = await postTransaction({
       transaction_type: args['transaction_type'] as string as import('../engine/types').TransactionType,
       date: args['date'] as string,
@@ -149,8 +206,8 @@ export async function handlePostTransaction(
       reference: args['reference'] as string | undefined,
       description: args['description'] as string | undefined,
       amount: args['amount'] as number | undefined,
-      lines: args['lines'] as import('../engine/types').JournalLine[] | undefined,
-      counterparty: args['counterparty'] as import('../engine/types').Counterparty | undefined,
+      lines: lines as import('../engine/types').JournalLine[] | undefined,
+      counterparty: counterparty as import('../engine/types').Counterparty | undefined,
       idempotency_key: args['idempotency_key'] as string | undefined,
       submitted_by: args['submitted_by'] as string | undefined,
       soft_close_override: args['soft_close_override'] as boolean | undefined,
@@ -923,7 +980,7 @@ export async function handleUpdateAccount(args: Record<string, unknown>): Promis
 // ---------------------------------------------------------------------------
 
 export const bulkPostTransactionsSchema = {
-  transactions: z.array(z.union([z.object({
+  transactions: z.array(z.object({
     transaction_type: z.string().describe('Transaction type'),
     reference: z.string().optional().describe('Reference'),
     date: z.string().describe('Accounting date (YYYY-MM-DD)'),
@@ -941,13 +998,40 @@ export const bulkPostTransactionsSchema = {
       contact_id: z.string().optional(),
     }).optional(),
     idempotency_key: z.string().optional().describe('Unique key per transaction'),
-  }), z.string()])).describe('Array of transactions to post'),
+  })).describe('Array of transactions to post'),
   stop_on_error: z.boolean().default(false).describe('If true, stop processing at the first error. If false, continue and report all errors at the end.'),
 };
 
 export async function handleBulkPostTransactions(args: Record<string, unknown>): Promise<ToolResult> {
   try {
-    const transactions = args['transactions'] as Array<Record<string, unknown>>;
+    // Defensively parse each transaction — callers may send stringified JSON
+    // items if the MCP client's schema serialisation flattens array items.
+    const txnSchema = z.object({
+      transaction_type: z.string(),
+      reference: z.string().optional(),
+      date: z.string(),
+      description: z.string().optional(),
+      amount: z.number().optional(),
+      period_id: z.string(),
+      lines: z
+        .array(
+          z.object({
+            account_code: z.string(),
+            description: z.string(),
+            debit: z.number().default(0),
+            credit: z.number().default(0),
+          }),
+        )
+        .optional(),
+      counterparty: z
+        .object({
+          trading_account_id: z.string().optional(),
+          contact_id: z.string().optional(),
+        })
+        .optional(),
+      idempotency_key: z.string().optional(),
+    });
+    const transactions = parseArrayItems(args['transactions'], txnSchema, 'transactions');
     const stopOnError = (args['stop_on_error'] as boolean | undefined) ?? false;
 
     let posted = 0;
@@ -956,31 +1040,24 @@ export async function handleBulkPostTransactions(args: Record<string, unknown>):
     const results: Array<Record<string, unknown>> = [];
 
     for (let i = 0; i < transactions.length; i++) {
-      let txn = transactions[i]!;
-
-      // MCP JSON-RPC may deliver array elements as serialised JSON strings
-      if (typeof txn === 'string') {
-        try {
-          txn = JSON.parse(txn) as Record<string, unknown>;
-        } catch {
-          errors++;
-          results.push({ index: i, status: 'ERROR', error: 'Invalid JSON in transaction element' });
-          if (stopOnError) break;
-          continue;
-        }
-      }
+      const txn = transactions[i]!;
 
       try {
         const submission = {
-          transaction_type: txn['transaction_type'] as TransactionType,
-          date: txn['date'] as string,
-          period_id: txn['period_id'] as string,
-          reference: txn['reference'] as string | undefined,
-          description: txn['description'] as string | undefined,
-          amount: txn['amount'] as number | undefined,
-          idempotency_key: txn['idempotency_key'] as string | undefined,
-          counterparty: txn['counterparty'] as { trading_account_id?: string; contact_id?: string } | undefined,
-          lines: txn['lines'] as Array<{ account_code: string; description: string; debit: number; credit: number }> | undefined,
+          transaction_type: txn.transaction_type as TransactionType,
+          date: txn.date,
+          period_id: txn.period_id,
+          reference: txn.reference,
+          description: txn.description,
+          amount: txn.amount,
+          idempotency_key: txn.idempotency_key,
+          counterparty: txn.counterparty,
+          lines: txn.lines?.map((l) => ({
+            account_code: l.account_code,
+            description: l.description,
+            debit: l.debit ?? 0,
+            credit: l.credit ?? 0,
+          })),
         };
         const result = await postTransaction(submission);
         if (result.status === 'COMMITTED') {
@@ -1387,9 +1464,16 @@ export async function handlePostOpeningBalances(
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   try {
+    const balanceSchema = z.object({
+      account_code: z.string(),
+      debit: z.number(),
+      credit: z.number(),
+    });
+    const balances = parseArrayItems(args['balances'], balanceSchema, 'balances');
+
     const { postOpeningBalances } = await import('../engine/setup');
     const result = await postOpeningBalances({
-      balances: args['balances'] as Array<{ account_code: string; debit: number; credit: number }>,
+      balances,
       effective_date: args['effective_date'] as string,
       description: args['description'] as string | undefined,
     });
@@ -1440,6 +1524,70 @@ export async function handleSaveBusinessProfile(
       registered_address: args['registered_address'] as string | undefined,
     });
     return ok({ success: true, company_name: args['company_name'] });
+  } catch (e) {
+    return wrapError(e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// gl_get_business_profile
+// ---------------------------------------------------------------------------
+
+export const getBusinessProfileSchema = {};
+
+export async function handleGetBusinessProfile(
+  _args: Record<string, unknown>,
+): Promise<ToolResult> {
+  try {
+    const row = await db('company_settings')
+      .where('id', 1)
+      .first<{
+        company_name: string | null;
+        company_number: string | null;
+        vat_number: string | null;
+        vat_registered: boolean;
+        vat_scheme: string | null;
+        financial_year_end_month: string | null;
+        base_currency: string;
+        territory: string | null;
+        industry: string | null;
+        settings: unknown;
+      } | undefined>();
+
+    if (!row || !row.company_name) {
+      return errResult(
+        'NOT_CONFIGURED',
+        'Business profile has not been saved yet. Call gl_save_business_profile first.',
+      );
+    }
+
+    // Knex returns jsonb columns either as a parsed object or a raw string
+    // depending on the driver; normalise here so callers always see an object.
+    let extra: Record<string, unknown> = {};
+    if (row.settings) {
+      if (typeof row.settings === 'string') {
+        try {
+          extra = JSON.parse(row.settings) as Record<string, unknown>;
+        } catch {
+          extra = {};
+        }
+      } else if (typeof row.settings === 'object') {
+        extra = row.settings as Record<string, unknown>;
+      }
+    }
+
+    return ok({
+      company_name: row.company_name,
+      company_number: row.company_number,
+      vat_registered: row.vat_registered,
+      vat_number: row.vat_number,
+      vat_scheme: row.vat_scheme,
+      financial_year_end_month: row.financial_year_end_month,
+      base_currency: row.base_currency,
+      territory: row.territory,
+      industry: row.industry,
+      registered_address: (extra['registered_address'] as string | undefined) ?? null,
+    });
   } catch (e) {
     return wrapError(e);
   }
@@ -1782,6 +1930,12 @@ export function registerTools(server: McpServer): void {
     'Save or update the business profile (company name, VAT registration, financial year end, territory, etc.).',
     saveBusinessProfileSchema,
     handleSaveBusinessProfile,
+  );
+  server.tool(
+    'gl_get_business_profile',
+    'Read the saved business profile (company name, VAT registration, financial year end, currency, territory, industry, registered address).',
+    getBusinessProfileSchema,
+    handleGetBusinessProfile,
   );
   server.tool('gl_start_batch_run', 'Start a new batch run. Call this at the beginning of each scheduled or manual batch session. Returns the batch_id to use for subsequent task recording.', startBatchRunSchema, (args) => handleStartBatchRun(args));
   server.tool('gl_record_batch_task', 'Record the completion of a task within a batch run. Call this after each major step (scan_inbox, process_documents, bank_reconciliation, etc.).', recordBatchTaskSchema, (args) => handleRecordBatchTask(args));

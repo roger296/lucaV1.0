@@ -54,7 +54,13 @@ interface ToolEntry {
 
 const toolRegistry = new Map<string, ToolEntry>();
 
-// Build a JSON Schema property descriptor from a Zod type
+// Build a JSON Schema property descriptor from a Zod type.
+//
+// Recursively handles nested ZodArray(ZodObject), ZodRecord, ZodDefault,
+// ZodEffects, etc. The previous implementation flattened all arrays to
+// items={type:'string'} and all objects to {type:'object'} with no properties,
+// which produced wildly incorrect tools/list output and broke every AI agent
+// that tried to post opening balances, manual journals, or bulk transactions.
 function zodToJsonSchema(zodType: z.ZodTypeAny): Record<string, unknown> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const def = (zodType as any)._def as Record<string, unknown>;
@@ -74,36 +80,88 @@ function zodToJsonSchema(zodType: z.ZodTypeAny): Record<string, unknown> {
       schema = { type: 'boolean' };
       break;
     case 'ZodEnum': {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const values = (def?.['values'] as string[]) ?? [];
       schema = { type: 'string', enum: values };
       break;
     }
-    case 'ZodArray':
-      schema = { type: 'array', items: { type: 'string' } };
+    case 'ZodArray': {
+      // Recurse into the element type so array-of-objects serialises correctly.
+      const element = def?.['type'] as z.ZodTypeAny | undefined;
+      schema = {
+        type: 'array',
+        items: element ? zodToJsonSchema(element) : { type: 'string' },
+      };
       break;
-    case 'ZodObject':
-      schema = { type: 'object' };
-      break;
-    case 'ZodOptional':
-    case 'ZodNullable': {
+    }
+    case 'ZodObject': {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const inner = (def?.['innerType'] as z.ZodTypeAny) ?? undefined;
+      const shapeFn = def?.['shape'] as (() => Record<string, z.ZodTypeAny>) | undefined;
+      const shape = typeof shapeFn === 'function' ? shapeFn() : {};
+      const properties: Record<string, unknown> = {};
+      const required: string[] = [];
+      for (const [key, child] of Object.entries(shape)) {
+        properties[key] = zodToJsonSchema(child);
+        if (!isOptional(child)) required.push(key);
+      }
+      schema = { type: 'object', properties };
+      if (required.length > 0) schema['required'] = required;
+      break;
+    }
+    case 'ZodRecord': {
+      const valueType = def?.['valueType'] as z.ZodTypeAny | undefined;
+      schema = {
+        type: 'object',
+        additionalProperties: valueType ? zodToJsonSchema(valueType) : true,
+      };
+      break;
+    }
+    case 'ZodOptional':
+    case 'ZodNullable':
+    case 'ZodDefault':
+    case 'ZodEffects':
+    case 'ZodBranded':
+    case 'ZodReadonly':
+    case 'ZodCatch': {
+      const inner = (def?.['innerType'] ?? def?.['schema']) as z.ZodTypeAny | undefined;
       schema = inner ? zodToJsonSchema(inner) : { type: 'string' };
       break;
     }
+    case 'ZodUnion': {
+      const options = (def?.['options'] as z.ZodTypeAny[]) ?? [];
+      schema = { anyOf: options.map((o) => zodToJsonSchema(o)) };
+      break;
+    }
+    case 'ZodLiteral': {
+      const value = def?.['value'];
+      const jsType = typeof value;
+      schema = { type: jsType === 'number' ? 'number' : jsType === 'boolean' ? 'boolean' : 'string', enum: [value] };
+      break;
+    }
+    case 'ZodAny':
+    case 'ZodUnknown':
+      schema = {};
+      break;
     default:
       schema = { type: 'string' };
   }
 
-  if (description) schema['description'] = description;
+  if (description && !schema['description']) schema['description'] = description;
   return schema;
 }
 
 function isOptional(zodType: z.ZodTypeAny): boolean {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const typeName = ((zodType as any)._def?.typeName as string) ?? '';
-  return typeName === 'ZodOptional' || typeName === 'ZodNullable';
+  const def = (zodType as any)._def as Record<string, unknown> | undefined;
+  const typeName = (def?.['typeName'] as string) ?? '';
+  if (typeName === 'ZodOptional' || typeName === 'ZodNullable' || typeName === 'ZodDefault') {
+    return true;
+  }
+  // Unwrap effects/branded/readonly wrappers to check inner.
+  if (typeName === 'ZodEffects' || typeName === 'ZodBranded' || typeName === 'ZodReadonly' || typeName === 'ZodCatch') {
+    const inner = (def?.['innerType'] ?? def?.['schema']) as z.ZodTypeAny | undefined;
+    return inner ? isOptional(inner) : false;
+  }
+  return false;
 }
 
 // Implement the McpServer interface so TypeScript is satisfied

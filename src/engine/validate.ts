@@ -36,8 +36,15 @@ const VALID_TAX_CODES = new Set<string>([
   'EXEMPT', 'OUTSIDE_SCOPE', 'REVERSE_CHARGE', 'POSTPONED_VAT',
 ]);
 
-/** Amount-based types that support account_code and tax_code overrides (VAT-bearing invoice types). */
+/** Amount-based types that support account_code override (P&L account redirection). */
 const OVERRIDE_SUPPORTED_TYPES = new Set<string>([
+  'CUSTOMER_INVOICE', 'SUPPLIER_INVOICE',
+  'CUSTOMER_CREDIT_NOTE', 'SUPPLIER_CREDIT_NOTE',
+  'BANK_RECEIPT', 'BANK_PAYMENT',
+]);
+
+/** Amount-based types that support tax_code override (VAT-bearing invoice types only). */
+const TAX_CODE_OVERRIDE_SUPPORTED_TYPES = new Set<string>([
   'CUSTOMER_INVOICE', 'SUPPLIER_INVOICE',
   'CUSTOMER_CREDIT_NOTE', 'SUPPLIER_CREDIT_NOTE',
 ]);
@@ -111,7 +118,7 @@ export function validateSubmission(submission: TransactionSubmission): void {
           `invalid tax_code: ${submission.tax_code}. Valid values: ${[...VALID_TAX_CODES].join(', ')}`,
         );
       }
-      if (!OVERRIDE_SUPPORTED_TYPES.has(transaction_type)) {
+      if (!TAX_CODE_OVERRIDE_SUPPORTED_TYPES.has(transaction_type)) {
         throw new ValidationError(
           `tax_code override is not supported for ${transaction_type}`,
         );
