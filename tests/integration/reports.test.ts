@@ -166,6 +166,81 @@ describe('getProfitAndLoss', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Profit and Loss report — date range spanning multiple periods (Bug 12)
+// ---------------------------------------------------------------------------
+
+describe('getProfitAndLoss — date range across multiple periods', () => {
+  let periodA: string;
+  let periodB: string;
+
+  beforeAll(async () => {
+    periodA = uniquePeriod();
+    periodB = uniquePeriod();
+    await createPeriod(periodA);
+    await createPeriod(periodB);
+
+    // Period A: CUSTOMER_INVOICE £1,200 gross → £1,000 revenue + £200 VAT
+    await post({
+      transaction_type: 'CUSTOMER_INVOICE',
+      date: `${periodA}-10`,
+      period_id: periodA,
+      amount: 1200,
+      idempotency_key: `pl-range-a-${periodA}`,
+    });
+
+    // Period B: CUSTOMER_INVOICE £2,400 gross → £2,000 revenue + £400 VAT
+    await post({
+      transaction_type: 'CUSTOMER_INVOICE',
+      date: `${periodB}-10`,
+      period_id: periodB,
+      amount: 2400,
+      idempotency_key: `pl-range-b-${periodB}`,
+    });
+  });
+
+  afterAll(async () => {
+    await deletePeriod(periodA);
+    await deletePeriod(periodB);
+  });
+
+  it('no date range: returns only the single period specified in period_id', async () => {
+    const report = await getProfitAndLoss({ period_id: periodA });
+    expect(report.total_revenue).toBe('1000.00');
+  });
+
+  it('date range spanning both periods: aggregates revenue across them', async () => {
+    const report = await getProfitAndLoss({
+      period_id: periodA,
+      from_date: `${periodA}-01`,
+      to_date: `${periodB}-28`,
+    });
+    // £1,000 (period A) + £2,000 (period B) = £3,000
+    expect(report.total_revenue).toBe('3000.00');
+  });
+
+  it('date range confined to period B: returns only period B revenue (period_id is ignored when dates are set)', async () => {
+    const report = await getProfitAndLoss({
+      period_id: periodA,
+      from_date: `${periodB}-01`,
+      to_date: `${periodB}-28`,
+    });
+    expect(report.total_revenue).toBe('2000.00');
+  });
+
+  it('aggregate across range equals sum of individual monthly reports', async () => {
+    const a = await getProfitAndLoss({ period_id: periodA });
+    const b = await getProfitAndLoss({ period_id: periodB });
+    const combined = await getProfitAndLoss({
+      period_id: periodA,
+      from_date: `${periodA}-01`,
+      to_date: `${periodB}-28`,
+    });
+    const expected = new Decimal(a.total_revenue).plus(b.total_revenue).toFixed(2);
+    expect(combined.total_revenue).toBe(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Balance Sheet report
 // ---------------------------------------------------------------------------
 

@@ -45,11 +45,20 @@ export async function getProfitAndLoss(opts: {
   from_date?: string;
   to_date?: string;
 }): Promise<ProfitAndLossResult> {
+  // When a date range is provided, the transactions.date filters below
+  // select across periods — so we must NOT also restrict to a single
+  // transaction_lines.period_id, which would neutralise the date range.
+  // When no date range is given, fall back to the single-period filter
+  // so callers still get "just this period" behaviour by default.
   let q = db('transaction_lines')
     .join('accounts', 'transaction_lines.account_code', 'accounts.code')
     .join('transactions', 'transaction_lines.transaction_id', 'transactions.transaction_id')
     .whereIn('accounts.type', ['REVENUE', 'EXPENSE'])
-    .where('transaction_lines.period_id', opts.period_id)
+    .modify((qb) => {
+      if (!opts.from_date && !opts.to_date) {
+        qb.where('transaction_lines.period_id', opts.period_id);
+      }
+    })
     .select(
       'accounts.code',
       'accounts.name',
