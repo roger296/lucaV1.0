@@ -1,0 +1,107 @@
+Luca Community License v1.0
+
+Copyright (c) 2026 eTail Support Limited. All rights reserved.
+
+Acceptance
+----------
+
+By using, copying, or distributing this software, you agree to the
+terms of this license. If you do not agree, do not use the software.
+
+
+Permitted Uses
+--------------
+
+Subject to the limitations below, you may use, copy, and modify this
+software for your own internal business or personal purposes, including:
+
+  (a) installing and running the software to manage your own accounting,
+      bookkeeping, or financial records;
+
+  (b) modifying the software for your own internal use;
+
+  (c) providing consulting, implementation, training, or support
+      services to others who are themselves licensed users of this
+      software;
+
+  (d) using the software in an educational or research setting.
+
+
+Limitations
+-----------
+
+You may NOT do any of the following without a separate commercial
+licence from eTail Support Limited:
+
+  1. Hosted or Managed Service. You may not provide the software, or
+     any material portion of it, to third parties as a hosted, managed,
+     or software-as-a-service offering where the service provides users
+     with access to the features or functionality of the software.
+
+  2. Distribution. You may not distribute, sublicense, sell, or
+     otherwise make available copies of the software, or any modified
+     version of it, to third parties. This includes publishing forks,
+     derivative works, or repackaged versions of the software, whether
+     for free or for a fee.
+
+  3. Commercial Add-ons. You may not create, distribute, or sell
+     add-ons, extensions, plugins, modules, or supplementary products
+     that are designed to interoperate with or enhance the software,
+     where those add-ons are offered commercially (for a fee or as part
+     of a paid service).
+
+For enquiries about commercial licensing, contact:
+licensing@lucaledger.com
+
+
+Notices
+-------
+
+You must retain all copyright notices and licence text in all copies
+of the software and in any modified versions.
+
+You may not remove, obscure, or alter any licensing, copyright, or
+other notices of the licensor in the software.
+
+
+No Circumvention
+----------------
+
+You may not alter, remove, or circumvent any licence key or other
+functionality in the software that enforces any of the limitations
+in this licence, or that enables or controls access to features
+restricted by this licence.
+
+
+Warranty Disclaimer
+-------------------
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+Governing Law
+-------------
+
+This licence is governed by the laws of England and Wales. Any
+disputes arising under this licence shall be subject to the exclusive
+jurisdiction of the courts of England and Wales.
+
+
+Definitions
+-----------
+
+"Software" means the Luca General Ledger source code, documentation,
+and associated files distributed under this licence.
+
+"Third parties" means any person or entity other than you and your
+employees acting within the scope of their employment.
+
+"Commercial licence" means a separate written agreement with eTail
+Support Limited authorising uses not permitted by this licence.

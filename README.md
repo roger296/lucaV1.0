@@ -6,6 +6,7 @@
 ![Node](https://img.shields.io/badge/Node-20-green?logo=node.js)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue?logo=postgresql)
 ![Docker](https://img.shields.io/badge/Docker-ready-blue?logo=docker)
+![License](https://img.shields.io/badge/License-Luca%20Community-blue)
 ![Tests](https://img.shields.io/badge/Tests-520%20passing-brightgreen)
 
 ---
@@ -218,4 +219,4 @@ See [SECURITY.md](SECURITY.md) for our vulnerability reporting policy. Please re
 
 ## License
 
-A custom open-source license will be added shortly. See the repository for updates.
+[Luca Community License v1.0](LICENSE) — free for internal business and personal use. Commercial licensing required for hosted services, distribution, and commercial add-ons. See the [LICENSE](LICENSE) file for full terms.
