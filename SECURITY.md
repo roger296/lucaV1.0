@@ -4,7 +4,7 @@
 
 If you discover a security vulnerability in Luca General Ledger, please report it privately rather than opening a public GitHub issue.
 
-**Email:** security@lucaledger.com
+**Email:** luca@etailsupport.com
 
 Include the following in your report:
 
