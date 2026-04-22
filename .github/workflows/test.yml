@@ -43,4 +43,6 @@ jobs:
 
       - run: npm run migrate
 
+      - run: npm run seed
+
       - run: npm test
